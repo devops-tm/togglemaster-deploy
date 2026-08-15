@@ -1,0 +1,61 @@
+name: GitOps Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Get Infrastructure Outputs from Terraform State
+        id: tf-outputs
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+          echo "AWS_ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
+          echo "AWS_REGION=${AWS_REGION:-us-east-1}" >> $GITHUB_ENV
+
+          AUTH_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-auth --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "rds-postgres-auth.cptcc8odbie7.us-east-1.rds.amazonaws.com")
+          FLAG_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-flag --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "rds-postgres-flag.cptcc8odbie7.us-east-1.rds.amazonaws.com")
+          TARGET_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-targeting --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "rds-postgres-targeting.cptcc8odbie7.us-east-1.rds.amazonaws.com")
+          
+          echo "RDS_AUTH_ENDPOINT=$AUTH_EP" >> $GITHUB_ENV
+          echo "RDS_FLAG_ENDPOINT=$FLAG_EP" >> $GITHUB_ENV
+          echo "RDS_TARGETING_ENDPOINT=$TARGET_EP" >> $GITHUB_ENV
+          
+          REDIS_EP=$(aws elasticache describe-replication-groups --replication-group-id togglemaster-redis --query "ReplicationGroups[0].NodeGroups[0].PrimaryEndpoint.Address" --output text 2>/dev/null || echo "togglemaster-redis.hgrreh.0001.use1.cache.amazonaws.com")
+          echo "REDIS_ENDPOINT=$REDIS_EP" >> $GITHUB_ENV
+
+      - name: Update Kubeconfig
+        run: |
+          aws eks update-kubeconfig --region us-east-1 --name togglemaster-cluster
+
+      - name: Inject Environment Variables (Envsubst)
+        run: |
+          envsubst < base/configmap.yaml > base/configmap.yaml.tmp && mv base/configmap.yaml.tmp base/configmap.yaml
+          envsubst < base/cluster-config/aws-auth.yaml > base/cluster-config/aws-auth.yaml.tmp && mv base/cluster-config/aws-auth.yaml.tmp base/cluster-config/aws-auth.yaml
+
+      - name: Validate Kustomize Build
+        run: |
+          kustomize build overlays/prod > /dev/null
+
+      - name: Apply Kubernetes Manifests
+        run: |
+          kubectl apply -k overlays/prod
