@@ -6,4 +6,4 @@ resources:
 images:
 - name: evaluation-service
   newName: /evaluation-service
-  newTag: 1101a6344a23e4bb32e8f6f2ed835f25a503c0e1
+  newTag: 1c19eecad5d3c0c4588568e229966387fa03b981
