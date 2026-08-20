@@ -5,4 +5,4 @@ resources:
 images:
 - name: targeting-service
   newName: /targeting-service
-  newTag: 4adefe7c9dbff363b339603cee9ca9f6c64c50e9
+  newTag: bc8970824b02db1a04a99a2ec61a73085f909c06
