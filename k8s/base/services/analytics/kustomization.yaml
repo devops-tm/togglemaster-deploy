@@ -6,4 +6,4 @@ resources:
 images:
 - name: analytics-service
   newName: /analytics-service
-  newTag: b5ef771f3d272f3958f842b55f5de1b74a050b6f
+  newTag: 5dc3a808a7688af2e9b96cd226c5672a13b680fa
