@@ -54,26 +54,23 @@ jobs:
           envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp && mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
 
 
-      - name: Install External Secrets Operator
+      - name: Create secrets from SSM
         run: |
-          # Verifica se o operator já está instalado
-          if ! kubectl get deployment external-secrets -n external-secrets >/dev/null 2>&1; then
-            echo "Installing External Secrets Operator..."
+          for service in auth flag targeting; do
+            CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/$service/credentials" --with-decryption --query "Parameter.Value" --output text)
+            USERNAME=$(echo $CREDS | jq -r '.username')
+            PASSWORD=$(echo $CREDS | jq -r '.password')
+            kubectl create secret generic db-$service-secret -n togglemaster \
+              --from-literal=username=$USERNAME \
+              --from-literal=password=$PASSWORD \
+              --dry-run=client -o yaml | kubectl apply -f -
+          done
 
-            # 1. Instala os CRDs usando server-side apply (necessário porque os CRDs são grandes)[reference:0]
-            kubectl apply -k "https://raw.githubusercontent.com/external-secrets/external-secrets/v2.9.0/deploy/crds/bundle.yaml" --server-side
-
-            # 2. Cria o namespace
-            kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f -
-
-            # 3. Instala o controller (deployment, service, serviceaccount, etc.)
-            kubectl apply -f "https://raw.githubusercontent.com/external-secrets/external-secrets/v2.9.0/deploy/deployment.yaml"
-
-            # 4. Aguarda o deployment ficar disponível
-            kubectl wait --for=condition=available deployment/external-secrets -n external-secrets --timeout=120s
-          else
-            echo "External Secrets Operator already installed."
-          fi
+          REDIS_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/redis/credentials" --with-decryption --query "Parameter.Value" --output text)
+          REDIS_PASS=$(echo $REDIS_CREDS | jq -r '.password')
+          kubectl create secret generic redis-secret -n togglemaster \
+            --from-literal=password=$REDIS_PASS \
+            --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy to Kubernetes
         run: |
