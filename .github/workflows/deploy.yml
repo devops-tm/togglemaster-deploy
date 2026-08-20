@@ -48,19 +48,28 @@ jobs:
           REDIS_EP=$(aws elasticache describe-cache-clusters --cache-cluster-id togglemaster-redis --query "CacheClusters[0].Endpoint.Address" --output text 2>/dev/null || echo "")
           echo "REDIS_ENDPOINT=$REDIS_EP" >> $GITHUB_ENV
 
-      - name: Update Kubeconfig
+      - name: Check EKS Cluster and Update Kubeconfig
         run: |
-          aws eks update-kubeconfig --region us-east-1 --name togglemaster-cluster
-
-      - name: Inject Environment Variables
-        run: |
-          envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp && mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
-          envsubst < k8s/base/cluster-config/aws-auth.yaml > k8s/base/cluster-config/aws-auth.yaml.tmp && mv k8s/base/cluster-config/aws-auth.yaml.tmp k8s/base/cluster-config/aws-auth.yaml
+          CLUSTER_NAME="togglemaster-cluster"
+          
+          if aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Cluster $CLUSTER_NAME encontrado. Atualizando kubeconfig..."
+            aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
+            echo "CLUSTER_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "Cluster $CLUSTER_NAME não encontrado. Pulando deploy."
+            echo "CLUSTER_EXISTS=false" >> $GITHUB_ENV
+          fi
+            - name: Inject Environment Variables
+              run: |
+                envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp && mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
+                envsubst < k8s/base/cluster-config/aws-auth.yaml > k8s/base/cluster-config/aws-auth.yaml.tmp && mv k8s/base/cluster-config/aws-auth.yaml.tmp k8s/base/cluster-config/aws-auth.yaml
 
       - name: Validate Kustomize Build
         run: |
           kustomize build k8s/overlays/prod > /dev/null
 
       - name: Apply Kubernetes Manifests
+        if: env.CLUSTER_EXISTS == 'true'
         run: |
           kubectl apply -k k8s/overlays/prod
