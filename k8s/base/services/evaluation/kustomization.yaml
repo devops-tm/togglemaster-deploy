@@ -1,5 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - deployment.yaml
-  - hpa.yaml
+- deployment.yaml
+- hpa.yaml
+images:
+- name: evaluation-service
+  newName: /evaluation-service
+  newTag: 1101a6344a23e4bb32e8f6f2ed835f25a503c0e1
