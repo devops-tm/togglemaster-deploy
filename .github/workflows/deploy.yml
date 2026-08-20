@@ -53,6 +53,19 @@ jobs:
         run: |
           envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp && mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
 
+
+      - name: Install External Secrets Operator
+        run: |
+          # Verifica se o operator já está instalado
+          if ! kubectl get deployment external-secrets -n external-secrets >/dev/null 2>&1; then
+            echo "Installing External Secrets Operator..."
+            kubectl apply -f https://github.com/external-secrets/external-secrets/releases/latest/download/external-secrets-crds.yaml
+            kubectl apply -f https://github.com/external-secrets/external-secrets/releases/latest/download/external-secrets-deployment.yaml
+            kubectl wait --for=condition=available deployment/external-secrets -n external-secrets --timeout=60s
+          else
+            echo "External Secrets Operator already installed."
+          fi
+
       - name: Deploy to Kubernetes
         run: |
           kubectl apply -k k8s/overlays/prod
