@@ -59,9 +59,18 @@ jobs:
           # Verifica se o operator já está instalado
           if ! kubectl get deployment external-secrets -n external-secrets >/dev/null 2>&1; then
             echo "Installing External Secrets Operator..."
-            kubectl apply -f https://github.com/external-secrets/external-secrets/releases/latest/download/external-secrets-crds.yaml
-            kubectl apply -f https://github.com/external-secrets/external-secrets/releases/latest/download/external-secrets-deployment.yaml
-            kubectl wait --for=condition=available deployment/external-secrets -n external-secrets --timeout=60s
+
+            # 1. Instala os CRDs usando server-side apply (necessário porque os CRDs são grandes)[reference:0]
+            kubectl apply -k "https://raw.githubusercontent.com/external-secrets/external-secrets/v2.9.0/deploy/crds/bundle.yaml" --server-side
+
+            # 2. Cria o namespace
+            kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f -
+
+            # 3. Instala o controller (deployment, service, serviceaccount, etc.)
+            kubectl apply -f "https://raw.githubusercontent.com/external-secrets/external-secrets/v2.9.0/deploy/deployment.yaml"
+
+            # 4. Aguarda o deployment ficar disponível
+            kubectl wait --for=condition=available deployment/external-secrets -n external-secrets --timeout=120s
           else
             echo "External Secrets Operator already installed."
           fi
