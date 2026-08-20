@@ -8,7 +8,6 @@ on:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
-  BUCKET_STATE: ${{ secrets.TERRAFORM_STATE_BUCKET }}
 
 jobs:
   deploy:
@@ -26,17 +25,9 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Get cluster name from remote state
+      - name: Get cluster name from SSM
         run: |
-          cd environments/prod/compute
-          terraform init -reconfigure \
-            -backend-config="bucket=$BUCKET_STATE" \
-            -backend-config="key=prod/compute/terraform.tfstate" \
-            -backend-config="region=$AWS_REGION"
-          CLUSTER_NAME=$(terraform output -raw cluster_name)
+          CLUSTER_NAME=$(aws ssm get-parameter --name "/togglemaster/prod/cluster-name" --query "Parameter.Value" --output text)
           echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
 
       - name: Setup kubeconfig
@@ -58,7 +49,7 @@ jobs:
           echo "RDS_TARGETING_ENDPOINT=$TARGET_EP" >> $GITHUB_ENV
           echo "REDIS_ENDPOINT=$REDIS_EP" >> $GITHUB_ENV
 
-      - name: Inject env vars into ConfigMap
+      - name: Inject environment variables into ConfigMap
         run: |
           envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp && mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
 
