@@ -5,4 +5,4 @@ resources:
 images:
 - name: flag-service
   newName: /flag-service
-  newTag: 0c3c607c942ea5cbec2e6b457521d6001fd47d65
+  newTag: 3f47f8ab82754e65af1468a5b802b9c520b7314f
