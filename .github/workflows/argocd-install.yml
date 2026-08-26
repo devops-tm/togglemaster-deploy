@@ -66,8 +66,8 @@ jobs:
           spec:
             project: default
             source:
-              repoURL: https://github.com/${{ env.GITOPS_REPO }}
-              targetRevision: main
+              repoURL: https://github.com/togglemaster-fiapdevops/togglemaster-deploy
+              targetRevision: deploy
               path: k8s/overlays/prod
             destination:
               server: https://kubernetes.default.svc
