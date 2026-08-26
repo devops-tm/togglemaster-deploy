@@ -52,6 +52,10 @@ jobs:
             --set configs.params."server\.insecure"=true \
             --wait
 
+      - name: Create namespace togglemaster
+        run: |
+          kubectl create namespace togglemaster --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Apply ArgoCD Application (GitOps)
         run: |
           cat <<EOF | kubectl apply -f -
@@ -68,7 +72,7 @@ jobs:
               path: k8s/overlays/prod
             destination:
               server: https://kubernetes.default.svc
-              namespace: default
+              namespace: togglemaster
             syncPolicy:
               automated:
                 prune: true
