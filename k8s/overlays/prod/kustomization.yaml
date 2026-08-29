@@ -6,10 +6,14 @@ resources:
 # Customizações específicas de produção
 
 patches:
-  - target:
-      kind: Deployment
-      name: auth-service
-    patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 2
+- patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 2
+  target:
+    kind: Deployment
+    name: auth-service
+images:
+- name: flag-service
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/flag-service
+  newTag: c76853ec60e628658f4374db27fe3fd70ac6fabc
