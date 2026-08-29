@@ -3,7 +3,7 @@ name: GitOps Deploy
 on:
   push:
     branches:
-      - main
+      - deploy
   workflow_dispatch:
 
 env:
@@ -25,6 +25,13 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Get AWS Account ID
+        id: account
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+
       - name: Get cluster name from SSM
         run: |
           CLUSTER_NAME=$(aws ssm get-parameter --name "/togglemaster/prod/cluster-name" --query "Parameter.Value" --output text)
@@ -34,11 +41,12 @@ jobs:
         run: |
           aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
 
+      - name: Ensure namespace exists
+        run: |
+          kubectl create namespace togglemaster --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Get infrastructure endpoints
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          echo "AWS_ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
-
           AUTH_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-auth --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
           FLAG_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-flag --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
           TARGET_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-targeting --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
@@ -52,7 +60,6 @@ jobs:
       - name: Inject environment variables into ConfigMap
         run: |
           envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp && mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
-
 
       - name: Create secrets from SSM
         run: |
@@ -72,6 +79,29 @@ jobs:
             --from-literal=password=$REDIS_PASS \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Deploy to Kubernetes
+      # ============================================================
+      # SUBSTITUI PLACEHOLDERS NO OVERLAY ANTES DE APLICAR
+      # ============================================================
+      - name: Replace placeholders in overlay
+        run: |
+          export AWS_ACCOUNT_ID="${{ env.ACCOUNT_ID }}"
+          export AWS_REGION="${{ env.AWS_REGION }}"
+          # Obtém a tag da imagem mais recente do deployment (opcional)
+          # Se quiser usar a tag atual do overlay, pode pular.
+          # Aqui vamos usar a tag que está no base (já atualizada pelo CI).
+          # Se quiser forçar uma tag, defina IMAGE_TAG.
+          export IMAGE_TAG=$(kubectl get deployment -n togglemaster auth-service -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2 2>/dev/null || echo "latest")
+          envsubst < k8s/overlays/prod/kustomization.yaml > k8s/overlays/prod/kustomization.yaml.tmp
+          mv k8s/overlays/prod/kustomization.yaml.tmp k8s/overlays/prod/kustomization.yaml
+
+      - name: Deploy to Kubernetes (using overlay with substituted values)
         run: |
           kubectl apply -k k8s/overlays/prod
+
+      - name: Validate endpoints
+        run: |
+          for ep in RDS_AUTH_ENDPOINT RDS_FLAG_ENDPOINT RDS_TARGETING_ENDPOINT REDIS_ENDPOINT; do
+            if [ -z "${!ep}" ]; then
+              echo "Warning: $ep is empty"
+            fi
+          done

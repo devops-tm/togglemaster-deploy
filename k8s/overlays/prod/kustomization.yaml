@@ -4,6 +4,30 @@ kind: Kustomization
 resources:
   - ../../base
 
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../base
+
+# O registry é definido com placeholders que serão substituídos no deploy
+images:
+- name: auth-service
+  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/auth-service
+  newTag: ${IMAGE_TAG}
+- name: flag-service
+  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/flag-service
+  newTag: ${IMAGE_TAG}
+- name: targeting-service
+  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/targeting-service
+  newTag: ${IMAGE_TAG}
+- name: evaluation-service
+  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/evaluation-service
+  newTag: ${IMAGE_TAG}
+- name: analytics-service
+  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/analytics-service
+  newTag: ${IMAGE_TAG}
+  
 # Customizações específicas de produção
 
 patches:

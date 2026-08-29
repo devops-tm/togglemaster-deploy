@@ -5,5 +5,5 @@ resources:
 - hpa.yaml
 images:
 - name: evaluation-service
-  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/evaluation-service
-  newTag: a907d86d6f5715d86e4ba6759f774296217ec32d
+  newName: evaluation-service
+  newTag: a0195946d3602e2e65befc55b13cd7163744d597
