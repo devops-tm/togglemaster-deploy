@@ -18,8 +18,8 @@ images:
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/flag-service
   newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
 - name: targeting-service
-  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/targeting-service
-  newTag: ${IMAGE_TAG}
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/targeting-service
+  newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
 
 # Substitui placeholders pelos valores do ConfigMap
 replacements:
