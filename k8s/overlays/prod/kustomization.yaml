@@ -1,16 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
-resources:
-  - ../../base
-
-
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
 resources:
 - ../../base
 
-# O registry é definido com placeholders que serão substituídos no deploy
+# Placeholders para serem substituídos pelo ConfigMap
 images:
 - name: auth-service
   newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/auth-service
@@ -27,7 +20,59 @@ images:
 - name: analytics-service
   newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/analytics-service
   newTag: ${IMAGE_TAG}
-  
+
+# Substitui placeholders pelos valores do ConfigMap
+replacements:
+- source:
+    kind: ConfigMap
+    name: aws-config
+    namespace: togglemaster
+    fieldPath: data.AWS_ACCOUNT_ID
+  targets:
+  - select:
+      kind: Kustomization
+      name: .*
+    fieldPaths:
+    - images.[name=auth-service].newName
+    - images.[name=flag-service].newName
+    - images.[name=targeting-service].newName
+    - images.[name=evaluation-service].newName
+    - images.[name=analytics-service].newName
+    options:
+      create: true
+- source:
+    kind: ConfigMap
+    name: aws-config
+    namespace: togglemaster
+    fieldPath: data.AWS_REGION
+  targets:
+  - select:
+      kind: Kustomization
+    fieldPaths:
+    - images.[name=auth-service].newName
+    - images.[name=flag-service].newName
+    - images.[name=targeting-service].newName
+    - images.[name=evaluation-service].newName
+    - images.[name=analytics-service].newName
+    options:
+      create: true
+- source:
+    kind: ConfigMap
+    name: aws-config
+    namespace: togglemaster
+    fieldPath: data.IMAGE_TAG
+  targets:
+  - select:
+      kind: Kustomization
+    fieldPaths:
+    - images.[name=auth-service].newTag
+    - images.[name=flag-service].newTag
+    - images.[name=targeting-service].newTag
+    - images.[name=evaluation-service].newTag
+    - images.[name=analytics-service].newTag
+    options:
+      create: true
+
 # Customizações específicas de produção
 
 patches:
