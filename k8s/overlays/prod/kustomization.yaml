@@ -5,50 +5,48 @@ resources:
 
 # Placeholders para serem substituídos pelo ConfigMap
 images:
+- name: analytics-service
+  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/analytics-service
+  newTag: ${IMAGE_TAG}
 - name: auth-service
   newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/auth-service
-  newTag: ${IMAGE_TAG}
-- name: flag-service
-  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/flag-service
-  newTag: ${IMAGE_TAG}
-- name: targeting-service
-  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/targeting-service
   newTag: ${IMAGE_TAG}
 - name: evaluation-service
   newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/evaluation-service
   newTag: ${IMAGE_TAG}
-- name: analytics-service
-  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/analytics-service
+- name: flag-service
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/flag-service
+  newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
+- name: targeting-service
+  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/targeting-service
   newTag: ${IMAGE_TAG}
 
 # Substitui placeholders pelos valores do ConfigMap
 replacements:
 - source:
+    fieldPath: data.AWS_ACCOUNT_ID
     kind: ConfigMap
     name: aws-config
     namespace: togglemaster
-    fieldPath: data.AWS_ACCOUNT_ID
   targets:
-  - select:
+  - fieldPaths:
+    - images.[name=auth-service].newName
+    - images.[name=flag-service].newName
+    - images.[name=targeting-service].newName
+    - images.[name=evaluation-service].newName
+    - images.[name=analytics-service].newName
+    options:
+      create: true
+    select:
       kind: Kustomization
       name: .*
-    fieldPaths:
-    - images.[name=auth-service].newName
-    - images.[name=flag-service].newName
-    - images.[name=targeting-service].newName
-    - images.[name=evaluation-service].newName
-    - images.[name=analytics-service].newName
-    options:
-      create: true
 - source:
-    kind: ConfigMap
-    name: aws-config
-    namespace: togglemaster
     fieldPath: data.AWS_REGION
+    kind: ConfigMap
+    name: aws-config
+    namespace: togglemaster
   targets:
-  - select:
-      kind: Kustomization
-    fieldPaths:
+  - fieldPaths:
     - images.[name=auth-service].newName
     - images.[name=flag-service].newName
     - images.[name=targeting-service].newName
@@ -56,15 +54,15 @@ replacements:
     - images.[name=analytics-service].newName
     options:
       create: true
+    select:
+      kind: Kustomization
 - source:
+    fieldPath: data.IMAGE_TAG
     kind: ConfigMap
     name: aws-config
     namespace: togglemaster
-    fieldPath: data.IMAGE_TAG
   targets:
-  - select:
-      kind: Kustomization
-    fieldPaths:
+  - fieldPaths:
     - images.[name=auth-service].newTag
     - images.[name=flag-service].newTag
     - images.[name=targeting-service].newTag
@@ -72,14 +70,16 @@ replacements:
     - images.[name=analytics-service].newTag
     options:
       create: true
+    select:
+      kind: Kustomization
 
 # Customizações específicas de produção
 
 patches:
-  - target:
-      kind: Deployment
-      name: auth-service
-    patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 2
+- patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 2
+  target:
+    kind: Deployment
+    name: auth-service
