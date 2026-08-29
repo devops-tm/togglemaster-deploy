@@ -14,6 +14,9 @@ patches:
     kind: Deployment
     name: auth-service
 images:
+- name: analytics-service
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/analytics-service
+  newTag: c76853ec60e628658f4374db27fe3fd70ac6fabc
 - name: flag-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/flag-service
   newTag: c76853ec60e628658f4374db27fe3fd70ac6fabc
