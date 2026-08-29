@@ -1,16 +1,85 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 resources:
-  - ../../base
+- ../../base
+
+# Placeholders para serem substituídos pelo ConfigMap
+images:
+- name: analytics-service
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/analytics-service
+  newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
+- name: auth-service
+  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/auth-service
+  newTag: ${IMAGE_TAG}
+- name: evaluation-service
+  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/evaluation-service
+  newTag: ${IMAGE_TAG}
+- name: flag-service
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/flag-service
+  newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
+- name: targeting-service
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/targeting-service
+  newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
+
+# Substitui placeholders pelos valores do ConfigMap
+replacements:
+- source:
+    fieldPath: data.AWS_ACCOUNT_ID
+    kind: ConfigMap
+    name: aws-config
+    namespace: togglemaster
+  targets:
+  - fieldPaths:
+    - images.[name=auth-service].newName
+    - images.[name=flag-service].newName
+    - images.[name=targeting-service].newName
+    - images.[name=evaluation-service].newName
+    - images.[name=analytics-service].newName
+    options:
+      create: true
+    select:
+      kind: Kustomization
+      name: .*
+- source:
+    fieldPath: data.AWS_REGION
+    kind: ConfigMap
+    name: aws-config
+    namespace: togglemaster
+  targets:
+  - fieldPaths:
+    - images.[name=auth-service].newName
+    - images.[name=flag-service].newName
+    - images.[name=targeting-service].newName
+    - images.[name=evaluation-service].newName
+    - images.[name=analytics-service].newName
+    options:
+      create: true
+    select:
+      kind: Kustomization
+- source:
+    fieldPath: data.IMAGE_TAG
+    kind: ConfigMap
+    name: aws-config
+    namespace: togglemaster
+  targets:
+  - fieldPaths:
+    - images.[name=auth-service].newTag
+    - images.[name=flag-service].newTag
+    - images.[name=targeting-service].newTag
+    - images.[name=evaluation-service].newTag
+    - images.[name=analytics-service].newTag
+    options:
+      create: true
+    select:
+      kind: Kustomization
 
 # Customizações específicas de produção
 
 patches:
-  - target:
-      kind: Deployment
-      name: auth-service
-    patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 2
+- patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 2
+  target:
+    kind: Deployment
+    name: auth-service
