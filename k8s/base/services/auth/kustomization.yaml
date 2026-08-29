@@ -4,5 +4,5 @@ resources:
 - deployment.yaml
 images:
 - name: auth-service
-  newName: /auth-service
-  newTag: 6c08cf487a10f464cc2577e9e77c10c03d167e2b
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/auth-service
+  newTag: a907d86d6f5715d86e4ba6759f774296217ec32d
