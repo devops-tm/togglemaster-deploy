@@ -25,6 +25,17 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Check if cluster exists
+        run: |
+          if ! aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Cluster $CLUSTER_NAME not found. Skipping deployment."
+            exit 0
+          fi
+
+      - name: Ensure namespace exists
+        run: |
+          kubectl create namespace togglemaster --dry-run=client -o yaml | kubectl apply -f -   
+
       - name: Get cluster name from SSM
         run: |
           CLUSTER_NAME=$(aws ssm get-parameter --name "/togglemaster/prod/cluster-name" --query "Parameter.Value" --output text)
@@ -69,9 +80,18 @@ jobs:
           REDIS_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/redis/credentials" --with-decryption --query "Parameter.Value" --output text)
           REDIS_PASS=$(echo $REDIS_CREDS | jq -r '.password')
           kubectl create secret generic redis-secret -n togglemaster \
-            --from-literal=password=$REDIS_PASS \
-            --dry-run=client -o yaml | kubectl apply -f -
+              --from-literal=username=$USERNAME \
+              --from-literal=password=$PASSWORD \
+              --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy to Kubernetes
         run: |
           kubectl apply -k k8s/overlays/prod
+
+      - name: Validate endpoints
+        run: |
+          for ep in RDS_AUTH_ENDPOINT RDS_FLAG_ENDPOINT RDS_TARGETING_ENDPOINT REDIS_ENDPOINT; do
+            if [ -z "${!ep}" ]; then
+              echo "Warning: $ep is empty"
+            fi
+          done
