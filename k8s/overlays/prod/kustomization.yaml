@@ -12,8 +12,8 @@ images:
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/auth-service
   newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
 - name: evaluation-service
-  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/evaluation-service
-  newTag: ${IMAGE_TAG}
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/evaluation-service
+  newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
 - name: flag-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/flag-service
   newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
