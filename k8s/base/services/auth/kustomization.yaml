@@ -5,4 +5,4 @@ resources:
 images:
 - name: auth-service
   newName: /auth-service
-  newTag: 73411ee5381d334e8771f0907f4a4e4822425d42
+  newTag: 11d4c62eec9bfa34760ccbe0ac81ca6b0b307823
