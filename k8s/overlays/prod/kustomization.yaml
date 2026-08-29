@@ -6,8 +6,8 @@ resources:
 # Placeholders para serem substituídos pelo ConfigMap
 images:
 - name: analytics-service
-  newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/analytics-service
-  newTag: ${IMAGE_TAG}
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/analytics-service
+  newTag: 60b304a20fee2d7bf55d87049d890f8452cd3a73
 - name: auth-service
   newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/auth-service
   newTag: ${IMAGE_TAG}
