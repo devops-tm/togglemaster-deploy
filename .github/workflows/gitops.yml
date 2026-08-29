@@ -1,4 +1,4 @@
-name: GitOps Deploy
+name: GitOps
 
 on:
   push:
@@ -60,6 +60,10 @@ jobs:
       - name: Inject environment variables into ConfigMap
         run: |
           envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp && mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
+
+      - name: Apply ConfigMap
+        run: |
+          kubectl apply -f k8s/base/configmap.yaml
 
       - name: Create secrets from SSM
         run: |
