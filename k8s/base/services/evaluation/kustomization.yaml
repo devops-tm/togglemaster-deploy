@@ -5,5 +5,5 @@ resources:
 - hpa.yaml
 images:
 - name: evaluation-service
-  newName: /evaluation-service
+  newName: evaluation-service
   newTag: a0195946d3602e2e65befc55b13cd7163744d597

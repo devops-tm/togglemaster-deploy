@@ -5,5 +5,5 @@ resources:
 - hpa.yaml
 images:
 - name: analytics-service
-  newName: /analytics-service
+  newName: analytics-service
   newTag: a0195946d3602e2e65befc55b13cd7163744d597

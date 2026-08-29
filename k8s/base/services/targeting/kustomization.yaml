@@ -4,5 +4,5 @@ resources:
 - deployment.yaml
 images:
 - name: targeting-service
-  newName: /targeting-service
+  newName: targeting-service
   newTag: a0195946d3602e2e65befc55b13cd7163744d597
