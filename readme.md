@@ -116,6 +116,9 @@ kustomize build k8s/overlays/prod | kubectl apply --dry-run=client -f -
 Após a instalação do ArgoCD, você pode acessar a interface web para visualizar o status de cada aplicação:
 
 ```bash
+#Update config
+aws eks update-kubeconfig --region <region> --name <cluster-name>
+
 # Obter a URL do Load Balancer
 kubectl get svc argocd-server -n argocd -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
 

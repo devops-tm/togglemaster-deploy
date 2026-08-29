@@ -3,7 +3,7 @@ name: GitOps Deploy
 on:
   push:
     branches:
-      - main
+      - deploy
   workflow_dispatch:
 
 env:
@@ -77,12 +77,9 @@ jobs:
               --dry-run=client -o yaml | kubectl apply -f -
           done
 
-          REDIS_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/redis/credentials" --with-decryption --query "Parameter.Value" --output text)
-          REDIS_PASS=$(echo $REDIS_CREDS | jq -r '.password')
           kubectl create secret generic redis-secret -n togglemaster \
-              --from-literal=username=$USERNAME \
-              --from-literal=password=$PASSWORD \
-              --dry-run=client -o yaml | kubectl apply -f -
+          --from-literal=password=$REDIS_PASS \
+          --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy to Kubernetes
         run: |
