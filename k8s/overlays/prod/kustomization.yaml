@@ -4,6 +4,10 @@ resources:
 - ../../base
 
 # Customizações específicas de produção
+
+
+
+
 patches:
 - patch: |-
     - op: replace
@@ -12,7 +16,6 @@ patches:
   target:
     kind: Deployment
     name: auth-service
-
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -20,7 +23,6 @@ patches:
   target:
     kind: Deployment
     name: flag-service
-
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -28,7 +30,6 @@ patches:
   target:
     kind: Deployment
     name: targeting-service
-
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -36,7 +37,6 @@ patches:
   target:
     kind: Deployment
     name: evaluation-service
-
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -47,18 +47,18 @@ patches:
 
 # Imagens com registry ECR e tag latest
 images:
+- name: analytics-service
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/analytics-service
+  newTag: 2ddc1f3e91775553537e5101e497914cdeaa8e3d
 - name: auth-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/auth-service
+  newTag: latest
+- name: evaluation-service
+  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/evaluation-service
   newTag: latest
 - name: flag-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/flag-service
   newTag: latest
 - name: targeting-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/targeting-service
-  newTag: latest
-- name: evaluation-service
-  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/evaluation-service
-  newTag: latest
-- name: analytics-service
-  newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/analytics-service
   newTag: latest
