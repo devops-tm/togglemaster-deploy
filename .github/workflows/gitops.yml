@@ -82,3 +82,30 @@ jobs:
           kubectl create secret generic redis-secret -n togglemaster \
             --from-literal=password=$REDIS_PASS \
             --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create combined secret togglemaster-secrets
+        run: |
+          AUTH_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/auth/credentials" --with-decryption --query "Parameter.Value" --output text)
+          AUTH_USER=$(echo $AUTH_CREDS | jq -r '.username')
+          AUTH_PASS=$(echo $AUTH_CREDS | jq -r '.password')
+
+          FLAG_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/flag/credentials" --with-decryption --query "Parameter.Value" --output text)
+          FLAG_USER=$(echo $FLAG_CREDS | jq -r '.username')
+          FLAG_PASS=$(echo $FLAG_CREDS | jq -r '.password')
+
+          TARGET_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/targeting/credentials" --with-decryption --query "Parameter.Value" --output text)
+          TARGET_USER=$(echo $TARGET_CREDS | jq -r '.username')
+          TARGET_PASS=$(echo $TARGET_CREDS | jq -r '.password')
+
+          REDIS_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/redis/credentials" --with-decryption --query "Parameter.Value" --output text)
+          REDIS_PASS=$(echo $REDIS_CREDS | jq -r '.password')
+
+          kubectl create secret generic togglemaster-secrets -n togglemaster \
+            --from-literal=AUTH_USER=$AUTH_USER \
+            --from-literal=AUTH_PASSWORD=$AUTH_PASS \
+            --from-literal=FLAG_USER=$FLAG_USER \
+            --from-literal=FLAG_PASSWORD=$FLAG_PASS \
+            --from-literal=TARGET_USER=$TARGET_USER \
+            --from-literal=TARGET_PASSWORD=$TARGET_PASS \
+            --from-literal=REDIS_PASSWORD=$REDIS_PASS \
+            --dry-run=client -o yaml | kubectl apply -f -

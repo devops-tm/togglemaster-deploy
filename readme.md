@@ -131,7 +131,7 @@ Usuário: `admin`
 ---
 
 
-- [Repositório de Aplicação (togglemaster-app)](https://github.com/togglemaster-fiapdevops/togglemaster-app) – onde estão os workflows CI/CD.
+- [Repositório de Aplicação (togglemaster-app)](https://github.com/devops-tm/togglemaster-app) – onde estão os workflows CI/CD.
 - [ArgoCD](https://argoproj.github.io/argo-cd/) – ferramenta de GitOps utilizada.
 - [Kustomize](https://kustomize.io/) – gerenciador de manifests Kubernetes.
 
