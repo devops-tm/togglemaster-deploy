@@ -85,6 +85,9 @@ jobs:
 
       - name: Create combined secret togglemaster-secrets
         run: |
+          MASTER_KEY=$(aws ssm get-parameter --name "/togglemaster/prod/evaluation/master_key" --with-decryption --query "Parameter.Value" --output text)
+          SERVICE_API_KEY=$(aws ssm get-parameter --name "/togglemaster/prod/evaluation/service_api_key" --with-decryption --query "Parameter.Value" --output text)
+
           AUTH_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/auth/credentials" --with-decryption --query "Parameter.Value" --output text)
           AUTH_USER=$(echo $AUTH_CREDS | jq -r '.username')
           AUTH_PASS=$(echo $AUTH_CREDS | jq -r '.password')
@@ -108,4 +111,6 @@ jobs:
             --from-literal=TARGET_USER=$TARGET_USER \
             --from-literal=TARGET_PASSWORD=$TARGET_PASS \
             --from-literal=REDIS_PASSWORD=$REDIS_PASS \
+            --from-literal=MASTER_KEY=$MASTER_KEY \
+            --from-literal=SERVICE_API_KEY=$SERVICE_API_KEY \
             --dry-run=client -o yaml | kubectl apply -f -

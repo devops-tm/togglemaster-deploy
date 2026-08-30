@@ -24,12 +24,12 @@ spec:
         - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
-              name: togglemaster-secrets
+              name: db-auth-secret
               key: POSTGRES_USER
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: togglemaster-secrets
+              name: db-auth-secret
               key: POSTGRES_PASSWORD
         - name: RDS_AUTH_ENDPOINT
           valueFrom:
