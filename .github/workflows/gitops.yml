@@ -11,7 +11,7 @@ env:
 
 jobs:
   secrets:
-    name: Sync Secrets from SSM
+    name: Gitops Deploy
     uses: ./.github/workflows/secrets-sync.yml
     with:
       cluster_name: ''
@@ -43,6 +43,11 @@ jobs:
         run: |
           aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
 
+      - name: Install gettext
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gettext-base
+
       - name: Ensure namespace exists
         run: |
           kubectl create namespace togglemaster --dry-run=client -o yaml | kubectl apply -f -
@@ -58,10 +63,23 @@ jobs:
           echo "RDS_FLAG_ENDPOINT=$FLAG_EP" >> $GITHUB_ENV
           echo "RDS_TARGETING_ENDPOINT=$TARGET_EP" >> $GITHUB_ENV
           echo "REDIS_ENDPOINT=$REDIS_EP" >> $GITHUB_ENV
+          echo "AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
+          echo "AWS_REGION=${{ env.AWS_REGION }}" >> $GITHUB_ENV
+
+      - name: Debug variables before envsubst
+        run: |
+          echo "RDS_AUTH_ENDPOINT=$RDS_AUTH_ENDPOINT"
+          echo "RDS_FLAG_ENDPOINT=$RDS_FLAG_ENDPOINT"
+          echo "REDIS_ENDPOINT=$REDIS_ENDPOINT"
 
       - name: Inject environment variables into ConfigMap
         run: |
-          envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp && mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
+          envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp
+          mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
+
+      - name: Debug ConfigMap after substitution
+        run: |
+          cat k8s/base/configmap.yaml
 
       - name: Apply ConfigMap
         run: |
