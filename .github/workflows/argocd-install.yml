@@ -59,30 +59,9 @@ jobs:
         run: |
           kubectl create namespace togglemaster --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Apply ArgoCD Application (GitOps)
+      - name: Apply Application on ArgoCD
         run: |
-          cat <<EOF | kubectl apply -f -
-          apiVersion: argoproj.io/v1alpha1
-          kind: Application
-          metadata:
-            name: togglemaster
-            namespace: argocd
-          spec:
-            project: default
-            source:
-              repoURL: https://github.com/${{ github.repository }}
-              targetRevision: deploy
-              path: k8s/overlays/prod
-            destination:
-              server: https://kubernetes.default.svc
-              namespace: togglemaster
-            syncPolicy:
-              automated:
-                prune: true
-                selfHeal: true
-              syncOptions:
-                - CreateNamespace=true
-          EOF
+          kubectl apply -f k8s/application.yaml
 
       - name: Show ArgoCD Load Balancer URL
         run: |
