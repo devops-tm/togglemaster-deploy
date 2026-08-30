@@ -16,7 +16,6 @@ jobs:
     with:
       cluster_name: ''
       namespace: togglemaster
-      region: ${{ env.AWS_REGION }}
     secrets: inherit
 
   configmap:
