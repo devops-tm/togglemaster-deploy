@@ -10,9 +10,19 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+  secrets:
+    name: Sync Secrets from SSM
+    uses: ./.github/workflows/secrets-sync.yml
+    with:
+      cluster_name: ''
+      namespace: togglemaster
+      region: ${{ env.AWS_REGION }}
+    secrets: inherit
 
+  configmap:
+    name: Update ConfigMap with endpoints
+    runs-on: ubuntu-latest
+    needs: secrets
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,13 +34,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Get AWS Account ID
-        id: account
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
-          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
 
       - name: Get cluster name from SSM
         run: |
@@ -65,52 +68,35 @@ jobs:
         run: |
           kubectl apply -f k8s/base/configmap.yaml
 
-      - name: Create secrets from SSM
+  jobs:
+    name: Apply DB Init Jobs
+    runs-on: ubuntu-latest
+    needs: [secrets, configmap]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get cluster name from SSM
         run: |
-          for service in auth flag targeting; do
-            CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/$service/credentials" --with-decryption --query "Parameter.Value" --output text)
-            USERNAME=$(echo $CREDS | jq -r '.username')
-            PASSWORD=$(echo $CREDS | jq -r '.password')
-            kubectl create secret generic db-$service-secret -n togglemaster \
-              --from-literal=username=$USERNAME \
-              --from-literal=password=$PASSWORD \
-              --dry-run=client -o yaml | kubectl apply -f -
-          done
+          CLUSTER_NAME=$(aws ssm get-parameter --name "/togglemaster/prod/cluster-name" --query "Parameter.Value" --output text)
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
 
-          REDIS_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/redis/credentials" --with-decryption --query "Parameter.Value" --output text)
-          REDIS_PASS=$(echo $REDIS_CREDS | jq -r '.password')
-          kubectl create secret generic redis-secret -n togglemaster \
-            --from-literal=password=$REDIS_PASS \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Create combined secret togglemaster-secrets
+      - name: Setup kubeconfig
         run: |
-          MASTER_KEY=$(aws ssm get-parameter --name "/togglemaster/prod/evaluation/master_key" --with-decryption --query "Parameter.Value" --output text)
-          SERVICE_API_KEY=$(aws ssm get-parameter --name "/togglemaster/prod/evaluation/service_api_key" --with-decryption --query "Parameter.Value" --output text)
+          aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
 
-          AUTH_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/auth/credentials" --with-decryption --query "Parameter.Value" --output text)
-          AUTH_USER=$(echo $AUTH_CREDS | jq -r '.username')
-          AUTH_PASS=$(echo $AUTH_CREDS | jq -r '.password')
+      - name: Delete old db-init jobs (if exist)
+        run: |
+          kubectl delete job auth-db-init flag-db-init targeting-db-init -n togglemaster --ignore-not-found
 
-          FLAG_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/flag/credentials" --with-decryption --query "Parameter.Value" --output text)
-          FLAG_USER=$(echo $FLAG_CREDS | jq -r '.username')
-          FLAG_PASS=$(echo $FLAG_CREDS | jq -r '.password')
-
-          TARGET_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/targeting/credentials" --with-decryption --query "Parameter.Value" --output text)
-          TARGET_USER=$(echo $TARGET_CREDS | jq -r '.username')
-          TARGET_PASS=$(echo $TARGET_CREDS | jq -r '.password')
-
-          REDIS_CREDS=$(aws ssm get-parameter --name "/togglemaster/prod/redis/credentials" --with-decryption --query "Parameter.Value" --output text)
-          REDIS_PASS=$(echo $REDIS_CREDS | jq -r '.password')
-
-          kubectl create secret generic togglemaster-secrets -n togglemaster \
-            --from-literal=AUTH_USER=$AUTH_USER \
-            --from-literal=AUTH_PASSWORD=$AUTH_PASS \
-            --from-literal=FLAG_USER=$FLAG_USER \
-            --from-literal=FLAG_PASSWORD=$FLAG_PASS \
-            --from-literal=TARGET_USER=$TARGET_USER \
-            --from-literal=TARGET_PASSWORD=$TARGET_PASS \
-            --from-literal=REDIS_PASSWORD=$REDIS_PASS \
-            --from-literal=MASTER_KEY=$MASTER_KEY \
-            --from-literal=SERVICE_API_KEY=$SERVICE_API_KEY \
-            --dry-run=client -o yaml | kubectl apply -f -
+      - name: Apply db-init jobs
+        run: |
+          kubectl apply -k k8s/base/jobs
