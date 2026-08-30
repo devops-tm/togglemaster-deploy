@@ -57,8 +57,8 @@ jobs:
           AUTH_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-auth --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
           FLAG_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-flag --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
           TARGET_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-targeting --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
-          REDIS_EP=$(aws elasticache describe-cache-clusters --cache-cluster-id togglemaster-redis --query "CacheClusters[0].Endpoint.Address" --output text 2>/dev/null || echo "")
-
+          REDIS_EP=$(aws elasticache describe-cache-clusters --cache-cluster-id togglemaster-redis --region us-east-1 --query "CacheClusters[0].Endpoint.Address" --output text 2>/dev/null || echo "redis-endpoint-not-found")
+          
           echo "RDS_AUTH_ENDPOINT=$AUTH_EP" >> $GITHUB_ENV
           echo "RDS_FLAG_ENDPOINT=$FLAG_EP" >> $GITHUB_ENV
           echo "RDS_TARGETING_ENDPOINT=$TARGET_EP" >> $GITHUB_ENV
