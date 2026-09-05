@@ -123,7 +123,8 @@ aws eks update-kubeconfig --region <region> --name <cluster-name>
 kubectl get svc argocd-server -n argocd -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
 
 # Obter a senha inicial do admin
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d 
+
 ```
 
 Usuário: `admin`
