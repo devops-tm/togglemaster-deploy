@@ -58,7 +58,7 @@ images:
   newTag: 43764c789dd84c2e62c1343a1133fa86403010b8
 - name: flag-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/flag-service
-  newTag: 43764c789dd84c2e62c1343a1133fa86403010b8
+  newTag: ddcf7f8b37761d92c153998d006841c344187c40
 - name: targeting-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/targeting-service
   newTag: 43764c789dd84c2e62c1343a1133fa86403010b8
