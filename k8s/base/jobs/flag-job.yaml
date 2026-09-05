@@ -15,11 +15,10 @@ spec:
         args:
           - |
             export PGPASSWORD=$POSTGRES_PASSWORD
-            psql \
-              -h $RDS_FLAG_ENDPOINT \
-              -U $POSTGRES_USER \
-              -d flags_db \
-              -f /sql/init.sql
+            # Cria a database se não existir
+            psql -h $RDS_FLAG_ENDPOINT -U $POSTGRES_USER -d postgres -c "CREATE DATABASE flags_db;"
+            # Executa o script SQL na database
+            psql -h $RDS_FLAG_ENDPOINT -U $POSTGRES_USER -d flags_db -f /sql/init.sql
         env:
         - name: POSTGRES_USER
           valueFrom:
