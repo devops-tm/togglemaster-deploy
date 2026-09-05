@@ -25,7 +25,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -40,7 +39,8 @@ jobs:
           AUTH_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-auth --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
           FLAG_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-flag --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
           TARGET_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-targeting --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
-          REDIS_EP=$(aws elasticache describe-cache-clusters --cache-cluster-id togglemaster-redis --query "CacheClusters[0].CacheNodes[0].Endpoint.Address" --output text 2>/dev/null || echo "")
+          # Correção: usar CacheNodes[0].Endpoint.Address
+          REDIS_EP=$(aws elasticache describe-cache-clusters --cache-cluster-id togglemaster-redis --query "CacheClusters[0].CacheNodes[0].Endpoint.Address" --output text 2>/dev/null || echo "redis-endpoint-not-found")
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           REGION="${{ env.AWS_REGION }}"
 
@@ -50,22 +50,6 @@ jobs:
           echo "REDIS_ENDPOINT=$REDIS_EP" >> $GITHUB_ENV
           echo "AWS_ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
           echo "AWS_REGION=$REGION" >> $GITHUB_ENV
-
-          # Debug
-          echo "AUTH_EP=$AUTH_EP"
-          echo "FLAG_EP=$FLAG_EP"
-          echo "REDIS_EP=$REDIS_EP"
-
-      - name: Debug - show configmap before substitution
-        run: cat k8s/base/configmap.yaml
-
-      - name: Inject environment variables into ConfigMap
-        run: |
-          envsubst < k8s/base/configmap.yaml > k8s/base/configmap.yaml.tmp
-          mv k8s/base/configmap.yaml.tmp k8s/base/configmap.yaml
-
-      - name: Debug - show configmap after substitution
-        run: cat k8s/base/configmap.yaml
 
       - name: Get cluster name from SSM
         run: |
@@ -80,14 +64,14 @@ jobs:
         run: |
           kubectl create namespace togglemaster --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Apply ConfigMap
+      - name: Patch ConfigMap with real values (preserve annotations)
         run: |
-          kubectl apply -f k8s/base/configmap.yaml
+          kubectl patch configmap togglemaster-config -n togglemaster --type merge --patch "{\"data\":{\"RDS_AUTH_ENDPOINT\":\"$RDS_AUTH_ENDPOINT\",\"RDS_FLAG_ENDPOINT\":\"$RDS_FLAG_ENDPOINT\",\"RDS_TARGETING_ENDPOINT\":\"$RDS_TARGETING_ENDPOINT\",\"REDIS_ENDPOINT\":\"$REDIS_ENDPOINT\",\"AWS_REGION\":\"$AWS_REGION\",\"AWS_SQS_URL\":\"https://sqs.$AWS_REGION.amazonaws.com/$AWS_ACCOUNT_ID/togglemaster-evaluation-events\"}}"
 
       - name: Restart deployments
         run: |
           kubectl rollout restart deployment auth-service flag-service targeting-service evaluation-service analytics-service -n togglemaster
-
+          
   jobs:
     name: Apply DB Init Jobs
     runs-on: ubuntu-latest
