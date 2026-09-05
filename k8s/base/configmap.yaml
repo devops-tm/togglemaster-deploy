@@ -3,6 +3,8 @@ kind: ConfigMap
 metadata:
   name: togglemaster-config
   namespace: togglemaster
+  annotations:
+    argocd.argoproj.io/sync-options: Skip=true 
 data:
   AWS_REGION: "${AWS_REGION}"
   AWS_SQS_URL: "https://sqs.${AWS_REGION}.amazonaws.com/${AWS_ACCOUNT_ID}/togglemaster-evaluation-events"
