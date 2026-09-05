@@ -25,12 +25,12 @@ spec:
           valueFrom:
             secretKeyRef:
               name: db-auth-secret
-              key: POSTGRES_USER
+              key: username
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: db-auth-secret
-              key: POSTGRES_PASSWORD
+              key: password
         - name: RDS_AUTH_ENDPOINT
           valueFrom:
             configMapKeyRef:
