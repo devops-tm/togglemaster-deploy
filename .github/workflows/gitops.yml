@@ -106,6 +106,9 @@ jobs:
         run: |
           kubectl delete job auth-db-init flag-db-init targeting-db-init -n togglemaster --ignore-not-found
 
+      - name: Debug SQL files
+        run: ls -la k8s/base/jobs/sql/auth/
+
       - name: Create SQL ConfigMaps from files
         run: |
           kubectl create configmap auth-init-sql -n togglemaster --from-file=k8s/base/jobs/sql/auth/init.sql --dry-run=client -o yaml | kubectl apply -f -
