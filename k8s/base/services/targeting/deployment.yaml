@@ -43,13 +43,13 @@ spec:
         - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
-              name: togglemaster-secrets
-              key: POSTGRES_USER
+              name: db-targeting-secret
+              key: username
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: togglemaster-secrets
-              key: POSTGRES_PASSWORD
+              name: db-targeting-secret
+              key: password
         - name: RDS_TARGETING_ENDPOINT
           valueFrom:
             configMapKeyRef:
