@@ -15,11 +15,9 @@ spec:
         args:
           - |
             export PGPASSWORD=$POSTGRES_PASSWORD
-            psql \
-              -h $RDS_AUTH_ENDPOINT \
-              -U $POSTGRES_USER \
-              -d auth_db \
-              -f /sql/init.sql
+            psql -h $RDS_AUTH_ENDPOINT -U $POSTGRES_USER -d postgres -c "CREATE DATABASE auth_db;"
+            psql -h $RDS_AUTH_ENDPOINT -U $POSTGRES_USER -d auth_db -f /sql/init.sql
+            
         env:
         - name: POSTGRES_USER
           valueFrom:
