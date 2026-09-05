@@ -19,12 +19,10 @@ jobs:
     secrets: inherit
 
   configmap:
-    name: Update ConfigMap with endpoints
+    name: Create/Update ConfigMap with endpoints
     runs-on: ubuntu-latest
     needs: secrets
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
       - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -39,7 +37,6 @@ jobs:
           AUTH_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-auth --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
           FLAG_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-flag --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
           TARGET_EP=$(aws rds describe-db-instances --db-instance-identifier rds-postgres-targeting --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
-          # Correção: usar CacheNodes[0].Endpoint.Address
           REDIS_EP=$(aws elasticache describe-cache-clusters --cache-cluster-id togglemaster-redis --query "CacheClusters[0].CacheNodes[0].Endpoint.Address" --output text 2>/dev/null || echo "redis-endpoint-not-found")
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           REGION="${{ env.AWS_REGION }}"
@@ -64,22 +61,27 @@ jobs:
         run: |
           kubectl create namespace togglemaster --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Patch ConfigMap with real values (preserve annotations)
+      - name: Create or update ConfigMap with real values
         run: |
-          kubectl patch configmap togglemaster-config -n togglemaster --type merge --patch "{\"data\":{\"RDS_AUTH_ENDPOINT\":\"$RDS_AUTH_ENDPOINT\",\"RDS_FLAG_ENDPOINT\":\"$RDS_FLAG_ENDPOINT\",\"RDS_TARGETING_ENDPOINT\":\"$RDS_TARGETING_ENDPOINT\",\"REDIS_ENDPOINT\":\"$REDIS_ENDPOINT\",\"AWS_REGION\":\"$AWS_REGION\",\"AWS_SQS_URL\":\"https://sqs.$AWS_REGION.amazonaws.com/$AWS_ACCOUNT_ID/togglemaster-evaluation-events\"}}"
-
+          kubectl create configmap togglemaster-config -n togglemaster \
+            --from-literal=RDS_AUTH_ENDPOINT="$RDS_AUTH_ENDPOINT" \
+            --from-literal=RDS_FLAG_ENDPOINT="$RDS_FLAG_ENDPOINT" \
+            --from-literal=RDS_TARGETING_ENDPOINT="$RDS_TARGETING_ENDPOINT" \
+            --from-literal=REDIS_ENDPOINT="$REDIS_ENDPOINT" \
+            --from-literal=AWS_REGION="$AWS_REGION" \
+            --from-literal=AWS_SQS_URL="https://sqs.$AWS_REGION.amazonaws.com/$AWS_ACCOUNT_ID/togglemaster-evaluation-events" \
+            --from-literal=AWS_DYNAMODB_TABLE="ToggleMasterAnalytics" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
       - name: Restart deployments
         run: |
           kubectl rollout restart deployment auth-service flag-service targeting-service evaluation-service analytics-service -n togglemaster
-          
+
   jobs:
     name: Apply DB Init Jobs
     runs-on: ubuntu-latest
     needs: [secrets, configmap]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
