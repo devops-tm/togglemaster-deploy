@@ -117,4 +117,4 @@ jobs:
 
       - name: Apply db-init jobs
         run: |
-          kubectl apply -k k8s/base/jobs
+          kubectl apply -k k8s/base/jobs -n togglemaster
