@@ -25,12 +25,12 @@ spec:
           valueFrom:
             secretKeyRef:
               name: db-targeting-secret
-              key: POSTGRES_USER
+              key: username
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: db-targeting-secret
-              key: POSTGRES_PASSWORD
+              key: password
         - name: RDS_TARGETING_ENDPOINT
           valueFrom:
             configMapKeyRef:
