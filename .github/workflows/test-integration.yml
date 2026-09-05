@@ -1,0 +1,217 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch:  # Permite execução manual
+  workflow_call:     # Permite ser chamado por outros workflows
+    inputs:
+      environment:
+        description: 'Ambiente de destino (prod, staging)'
+        required: false
+        type: string
+        default: 'togglemaster'
+
+jobs:
+  test-integration:
+    name: Run Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get cluster name from SSM
+        run: |
+          CLUSTER_NAME=$(aws ssm get-parameter --name "/togglemaster/prod/cluster-name" --query "Parameter.Value" --output text)
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+
+      - name: Setup kubeconfig
+        run: |
+          aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
+
+      - name: Get Ingress NodePort
+        id: nodeport
+        run: |
+          NODEPORT=$(kubectl get svc ingress-nginx-controller -n togglemaster -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}' 2>/dev/null)
+          
+          if [ -z "$NODEPORT" ]; then
+            echo "ERROR: Could not find Ingress NodePort"
+            exit 1
+          fi
+          
+          echo "nodeport=$NODEPORT" >> $GITHUB_OUTPUT
+          echo "NodePort detected: $NODEPORT"
+
+      - name: Get Master Key from Kubernetes secret
+        id: masterkey
+        run: |
+          MASTER_KEY=$(kubectl get secret togglemaster-secrets -n togglemaster -o jsonpath="{.data.MASTER_KEY}" 2>/dev/null | base64 --decode)
+          
+          if [ -z "$MASTER_KEY" ]; then
+            echo "ERROR: Could not retrieve MASTER_KEY from secret togglemaster-secrets"
+            exit 1
+          fi
+          
+          echo "master_key=$MASTER_KEY" >> $GITHUB_OUTPUT
+          echo "Master key retrieved successfully"
+
+      - name: Verify Ingress Controller is running
+        run: |
+          if ! kubectl get pods -n togglemaster -l app.kubernetes.io/name=ingress-nginx | grep -q "Running"; then
+            echo "ERROR: Ingress Controller is not running"
+            kubectl get pods -n togglemaster
+            exit 1
+          fi
+          echo "Ingress Controller is operational"
+
+      - name: Get worker node IPs
+        id: nodeips
+        run: |
+          NODE_IPS=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="ExternalIP")].address}')
+          
+          if [ -z "$NODE_IPS" ]; then
+            NODE_IPS=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}')
+          fi
+          
+          if [ -z "$NODE_IPS" ]; then
+            echo "ERROR: Could not get node IPs"
+            exit 1
+          fi
+          
+          echo "node_ips=$NODE_IPS" >> $GITHUB_OUTPUT
+          echo "Node IPs: $NODE_IPS"
+
+      - name: Find working node IP
+        id: workingip
+        run: |
+          NODEPORT="${{ steps.nodeport.outputs.nodeport }}"
+          WORKING_IP=""
+          
+          for IP in ${{ steps.nodeips.outputs.node_ips }}; do
+            echo -n "Testing connectivity to node $IP on port $NODEPORT... "
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://${IP}:${NODEPORT}" 2>/dev/null || echo "000")
+            
+            if [ "$HTTP_STATUS" != "000" ]; then
+              echo "SUCCESS"
+              WORKING_IP=$IP
+              break
+            else
+              echo "FAILED (Timeout)"
+            fi
+          done
+          
+          if [ -z "$WORKING_IP" ]; then
+            echo "ERROR: No accessible node found"
+            exit 1
+          fi
+          
+          echo "working_ip=$WORKING_IP" >> $GITHUB_OUTPUT
+          echo "Working node IP: $WORKING_IP"
+
+      - name: Generate API Key (Authentication)
+        id: auth
+        run: |
+          BASE_URL="http://${{ steps.workingip.outputs.working_ip }}:${{ steps.nodeport.outputs.nodeport }}"
+          MASTER_KEY="${{ steps.masterkey.outputs.master_key }}"
+          
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
+          
+          AUTH_RESPONSE=$(curl -s -X POST "${BASE_URL}/validate/admin/keys" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${MASTER_KEY}" \
+            -d '{"name": "integration-test-key"}')
+          
+          API_KEY=$(echo "$AUTH_RESPONSE" | jq -r '.key // empty')
+          
+          if [ -z "$API_KEY" ]; then
+            echo "ERROR: Authentication failed. Server response:"
+            echo "$AUTH_RESPONSE"
+            exit 1
+          fi
+          
+          echo "api_key=$API_KEY" >> $GITHUB_OUTPUT
+          echo "API Key generated successfully"
+
+      - name: Create test flag (optional mode selection)
+        id: flag
+        run: |
+          BASE_URL="${{ env.BASE_URL }}"
+          API_KEY="${{ steps.auth.outputs.api_key }}"
+          TIMESTAMP=$(date +%s)
+          FLAG_NAME="enable-new-dashboard-${TIMESTAMP}"
+          
+          echo "flag_name=$FLAG_NAME" >> $GITHUB_OUTPUT
+          echo "Creating flag: $FLAG_NAME"
+          
+          FLAG_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/flag/flags" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -d "{
+                \"name\": \"$FLAG_NAME\",
+                \"description\": \"Ativa o novo dashboard para usuarios\",
+                \"is_enabled\": true
+            }")
+          
+          HTTP_STATUS=$(echo "$FLAG_RESPONSE" | tail -n 1)
+          if [ "$HTTP_STATUS" != "201" ] && [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: Failed to create flag. HTTP status: $HTTP_STATUS"
+            echo "$FLAG_RESPONSE"
+            exit 1
+          fi
+          echo "Flag created successfully"
+
+      - name: Create targeting rule
+        id: targeting
+        run: |
+          BASE_URL="${{ env.BASE_URL }}"
+          API_KEY="${{ steps.auth.outputs.api_key }}"
+          FLAG_NAME="${{ steps.flag.outputs.flag_name }}"
+          
+          TARGETING_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/targeting/rules" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -d "{
+                \"flag_name\": \"$FLAG_NAME\",
+                \"is_enabled\": true,
+                \"rules\": {
+                    \"type\": \"PERCENTAGE\",
+                    \"value\": 50
+                }
+            }")
+          
+          HTTP_STATUS=$(echo "$TARGETING_RESPONSE" | tail -n 1)
+          if [ "$HTTP_STATUS" != "201" ] && [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: Failed to create targeting rule. HTTP status: $HTTP_STATUS"
+            echo "$TARGETING_RESPONSE"
+            exit 1
+          fi
+          echo "Targeting rule created successfully"
+
+      - name: Evaluate flag
+        id: evaluate
+        run: |
+          BASE_URL="${{ env.BASE_URL }}"
+          API_KEY="${{ steps.auth.outputs.api_key }}"
+          FLAG_NAME="${{ steps.flag.outputs.flag_name }}"
+          
+          EVALUATION_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+            "${BASE_URL}/evaluation/evaluate?user_id=user-12345&flag_name=${FLAG_NAME}" \
+            -H "Authorization: Bearer ${API_KEY}")
+          
+          HTTP_STATUS=$(echo "$EVALUATION_RESPONSE" | tail -n 1)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: Evaluation failed. HTTP status: $HTTP_STATUS"
+            echo "$EVALUATION_RESPONSE"
+            exit 1
+          fi
+          
+          RESULT=$(echo "$EVALUATION_RESPONSE" | head -n -1)
+          echo "Evaluation result: $RESULT"
+          echo "Integration tests completed successfully"
