@@ -51,12 +51,12 @@ jobs:
           echo "AWS_ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
           echo "AWS_REGION=$REGION" >> $GITHUB_ENV
 
-          # Debug: print values
+          # Debug
           echo "AUTH_EP=$AUTH_EP"
           echo "FLAG_EP=$FLAG_EP"
           echo "REDIS_EP=$REDIS_EP"
 
-      - name: Debug - show current configmap before substitution
+      - name: Debug - show configmap before substitution
         run: cat k8s/base/configmap.yaml
 
       - name: Inject environment variables into ConfigMap
@@ -67,9 +67,6 @@ jobs:
       - name: Debug - show configmap after substitution
         run: cat k8s/base/configmap.yaml
 
-      - name: Apply ConfigMap
-        run: kubectl apply -f k8s/base/configmap.yaml
-
       - name: Get cluster name from SSM
         run: |
           CLUSTER_NAME=$(aws ssm get-parameter --name "/togglemaster/prod/cluster-name" --query "Parameter.Value" --output text)
@@ -79,7 +76,15 @@ jobs:
         run: |
           aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
 
-      - name: Restart deployments to pick up new ConfigMap
+      - name: Ensure namespace exists
+        run: |
+          kubectl create namespace togglemaster --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply ConfigMap
+        run: |
+          kubectl apply -f k8s/base/configmap.yaml
+
+      - name: Restart deployments
         run: |
           kubectl rollout restart deployment auth-service flag-service targeting-service evaluation-service analytics-service -n togglemaster
 
