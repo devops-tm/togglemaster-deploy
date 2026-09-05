@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/togglemaster-fiapdevops/togglemaster-deploy
+    repoURL: https://github.com/${{ github.repository }}
     targetRevision: deploy
     path: k8s/overlays/prod
   destination:
