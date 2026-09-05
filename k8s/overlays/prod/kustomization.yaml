@@ -61,4 +61,4 @@ images:
   newTag: e9dbe03ba8ec74f92ecc251a19680aa5071e1e12
 - name: targeting-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/targeting-service
-  newTag: 43764c789dd84c2e62c1343a1133fa86403010b8
+  newTag: 8a499420923cbd737ed4cb6eb14d100a09d365d1
