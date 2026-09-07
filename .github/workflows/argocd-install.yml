@@ -59,15 +59,7 @@ jobs:
         run: |
           kubectl create namespace togglemaster --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Apply Application on ArgoCD
+      - name: apply Application
         run: |
-          kubectl apply -f k8s/application.yaml
-
-      - name: Show ArgoCD Load Balancer URL
-        run: |
-          echo "ArgoCD Load Balancer URL:"
-          kubectl get svc argocd-server -n argocd -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
-          echo ""
-          echo ""
-          echo "Para obter a senha do admin, execute localmente:"
-          echo "kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath=\"{.data.password}\" | base64 -d"
+          export REPO_URL="https://github.com/${{ github.repository }}"
+          envsubst < k8s/application.yaml | kubectl apply -f -
