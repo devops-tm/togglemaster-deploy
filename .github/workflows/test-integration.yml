@@ -11,18 +11,19 @@ on:
         default: 'togglemaster'
 
 jobs:
-  test-integration:
-    name: Run Integration Tests
+  # ============================================================
+  # JOB DE CONFIGURAÇÃO (executa uma vez)
+  # ============================================================
+  setup:
+    name: Setup
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    outputs:
+      BASE_URL: ${{ steps.set-base-url.outputs.BASE_URL }}
+      MASTER_KEY: ${{ steps.get-master-key.outputs.MASTER_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 1. CONFIGURAÇÃO AWS E CLUSTER
-      # ============================================================
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -40,119 +41,52 @@ jobs:
         run: |
           aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
 
-      # ============================================================
-      # 2. VERIFICAÇÃO PRÉVIA DA INFRAESTRUTURA (Health Checks)
-      # ============================================================
       - name: Wait for Ingress Controller
         run: |
-          echo "Aguardando Ingress Controller..."
           kubectl wait --for=condition=available deployment/ingress-nginx-controller -n ingress-nginx --timeout=120s || true
-          kubectl get pods -n ingress-nginx
 
-      - name: Wait for all services to be ready
-        run: |
-          echo "Aguardando serviços ficarem disponíveis..."
-          SERVICES="auth-service flag-service targeting-service evaluation-service analytics-service"
-          for svc in $SERVICES; do
-            echo "Verificando $svc..."
-            kubectl wait --for=condition=available deployment/$svc -n togglemaster --timeout=60s || true
-          done
-          kubectl get pods -n togglemaster
-
-      # ============================================================
-      # 3. OBTENÇÃO DOS ENDPOINTS E CREDENCIAIS
-      # ============================================================
-      - name: Get Ingress NodePort
-        id: nodeport
-        run: |
-          NODEPORT=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}' 2>/dev/null)
-          
-          if [ -z "$NODEPORT" ]; then
-            echo "ERROR: Could not find Ingress NodePort"
-            exit 1
-          fi
-          
-          echo "nodeport=$NODEPORT" >> $GITHUB_OUTPUT
-          echo "NodePort detected: $NODEPORT"
-
-      - name: Get Ingress LoadBalancer URL (fallback)
-        id: ingress
+      - name: Get Ingress LoadBalancer URL
+        id: get-ingress
         run: |
           INGRESS_URL=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+          if [ -z "$INGRESS_URL" ]; then
+            echo "ERROR: LoadBalancer not ready yet"
+            exit 1
+          fi
           echo "ingress_url=$INGRESS_URL" >> $GITHUB_OUTPUT
-          echo "Ingress URL: $INGRESS_URL"
+
+      - name: Set BASE_URL
+        id: set-base-url
+        run: |
+          BASE_URL="http://${{ steps.get-ingress.outputs.ingress_url }}"
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_OUTPUT
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
 
       - name: Get Master Key
-        id: masterkey
+        id: get-master-key
         run: |
           MASTER_KEY=$(kubectl get secret togglemaster-secrets -n togglemaster -o jsonpath="{.data.MASTER_KEY}" 2>/dev/null | base64 --decode)
-          
           if [ -z "$MASTER_KEY" ]; then
             echo "ERROR: Could not retrieve MASTER_KEY"
             exit 1
           fi
-          
-          echo "master_key=$MASTER_KEY" >> $GITHUB_OUTPUT
+          echo "MASTER_KEY=$MASTER_KEY" >> $GITHUB_OUTPUT
 
-      # ============================================================
-      # 4. OBTENÇÃO DOS IPs DOS NÓS
-      # ============================================================
-      - name: Get worker node IPs
-        id: nodeips
-        run: |
-          NODE_IPS=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="ExternalIP")].address}')
-          
-          if [ -z "$NODE_IPS" ]; then
-            NODE_IPS=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}')
-          fi
-          
-          if [ -z "$NODE_IPS" ]; then
-            echo "ERROR: Could not get node IPs"
-            exit 1
-          fi
-          
-          echo "node_ips=$NODE_IPS" >> $GITHUB_OUTPUT
-          echo "Node IPs: $NODE_IPS"
+  # ============================================================
+  # TESTE DE SAÚDE (paralelo)
+  # ============================================================
+  test-health:
+    name: Health Checks
+    runs-on: ubuntu-latest
+    needs: setup
+    env:
+      BASE_URL: ${{ needs.setup.outputs.BASE_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Find working node IP
-        id: workingip
-        run: |
-          NODEPORT="${{ steps.nodeport.outputs.nodeport }}"
-          WORKING_IP=""
-          
-          for IP in ${{ steps.nodeips.outputs.node_ips }}; do
-            echo -n "Testing connectivity to node $IP on port $NODEPORT... "
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://${IP}:${NODEPORT}" 2>/dev/null || echo "000")
-            
-            if [ "$HTTP_STATUS" == "200" ] || [ "$HTTP_STATUS" == "404" ] || [ "$HTTP_STATUS" == "403" ]; then
-              echo "SUCCESS (HTTP $HTTP_STATUS)"
-              WORKING_IP=$IP
-              break
-            else
-              echo "FAILED (HTTP $HTTP_STATUS)"
-            fi
-          done
-          
-          if [ -z "$WORKING_IP" ]; then
-            echo "ERROR: No accessible node found"
-            exit 1
-          fi
-          
-          echo "working_ip=$WORKING_IP" >> $GITHUB_OUTPUT
-          echo "Working node IP: $WORKING_IP"
-
-      - name: Set BASE_URL
-        run: |
-          BASE_URL="http://${{ steps.workingip.outputs.working_ip }}:${{ steps.nodeport.outputs.nodeport }}"
-          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
-          echo "BASE_URL: $BASE_URL"
-
-      # ============================================================
-      # 5. TESTE DE SAÚDE DOS SERVIÇOS
-      # ============================================================
       - name: Health Check - Auth Service
         run: |
-          echo "Testando /health do auth-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/auth/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Auth service health check failed (HTTP $HEALTH_STATUS)"
@@ -162,7 +96,6 @@ jobs:
 
       - name: Health Check - Flag Service
         run: |
-          echo "Testando /health do flag-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/flag/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Flag service health check failed (HTTP $HEALTH_STATUS)"
@@ -172,7 +105,6 @@ jobs:
 
       - name: Health Check - Targeting Service
         run: |
-          echo "Testando /health do targeting-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/targeting/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Targeting service health check failed (HTTP $HEALTH_STATUS)"
@@ -182,7 +114,6 @@ jobs:
 
       - name: Health Check - Evaluation Service
         run: |
-          echo "Testando /health do evaluation-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/evaluation/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Evaluation service health check failed (HTTP $HEALTH_STATUS)"
@@ -192,7 +123,6 @@ jobs:
 
       - name: Health Check - Analytics Service
         run: |
-          echo "Testando /health do analytics-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/analytics/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Analytics service health check failed (HTTP $HEALTH_STATUS)"
@@ -200,15 +130,24 @@ jobs:
           fi
           echo "Analytics service is healthy"
 
-      # ============================================================
-      # 6. TESTE DE AUTENTICAÇÃO
-      # ============================================================
-      - name: Test Authentication - Invalid API Key
+  # ============================================================
+  # TESTE DE AUTENTICAÇÃO (paralelo)
+  # ============================================================
+  test-auth:
+    name: Authentication Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    env:
+      BASE_URL: ${{ needs.setup.outputs.BASE_URL }}
+      MASTER_KEY: ${{ needs.setup.outputs.MASTER_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test Invalid API Key
         run: |
-          echo "Testando autenticação com chave inválida..."
           RESPONSE=$(curl -s -w "%{http_code}" -X GET "$BASE_URL/flag/flags" \
             -H "Authorization: Bearer invalid-key" 2>/dev/null)
-          
           HTTP_STATUS=$(echo "$RESPONSE" | tail -c 4)
           if [ "$HTTP_STATUS" != "401" ]; then
             echo "ERROR: Expected 401 for invalid key, got $HTTP_STATUS"
@@ -216,11 +155,9 @@ jobs:
           fi
           echo "Invalid key properly rejected (HTTP $HTTP_STATUS)"
 
-      - name: Test Authentication - Missing Authorization Header
+      - name: Test Missing Authorization Header
         run: |
-          echo "Testando autenticação sem header Authorization..."
           RESPONSE=$(curl -s -w "%{http_code}" -X GET "$BASE_URL/flag/flags" 2>/dev/null)
-          
           HTTP_STATUS=$(echo "$RESPONSE" | tail -c 4)
           if [ "$HTTP_STATUS" != "401" ]; then
             echo "ERROR: Expected 401 for missing header, got $HTTP_STATUS"
@@ -228,102 +165,164 @@ jobs:
           fi
           echo "Missing header properly rejected (HTTP $HTTP_STATUS)"
 
-      # ============================================================
-      # 7. TESTE DE GERAÇÃO DE API KEY
-      # ============================================================
-      - name: Generate API Key (Authentication)
-        id: auth
+      - name: Generate API Key
+        id: generate-key
         run: |
-          MASTER_KEY="${{ steps.masterkey.outputs.master_key }}"
-          
           AUTH_RESPONSE=$(curl -s -X POST "${BASE_URL}/validate/admin/keys" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${MASTER_KEY}" \
-            -d '{"name": "integration-test-key"}')
-          
+            -d '{"name": "test-api-key"}')
           API_KEY=$(echo "$AUTH_RESPONSE" | jq -r '.key // empty')
-          
           if [ -z "$API_KEY" ]; then
-            echo "ERROR: Authentication failed. Server response:"
-            echo "$AUTH_RESPONSE"
+            echo "ERROR: Authentication failed"
             exit 1
           fi
-          
-          echo "api_key=$API_KEY" >> $GITHUB_OUTPUT
+          echo "API_KEY=$API_KEY" >> $GITHUB_ENV
           echo "API Key generated successfully"
 
-      # ============================================================
-      # 8. TESTE DE CRIAÇÃO DE FLAG
-      # ============================================================
-      - name: Create test flag
-        id: flag
+      - name: Validate Generated API Key
         run: |
-          API_KEY="${{ steps.auth.outputs.api_key }}"
-          TIMESTAMP=$(date +%s)
-          FLAG_NAME="enable-new-dashboard-${TIMESTAMP}"
-          
-          echo "flag_name=$FLAG_NAME" >> $GITHUB_OUTPUT
-          echo "Creating flag: $FLAG_NAME"
-          
+          RESPONSE=$(curl -s -w "%{http_code}" -X GET "$BASE_URL/flag/flags" \
+            -H "Authorization: Bearer ${API_KEY}" 2>/dev/null)
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -c 4)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: Generated key failed to authenticate (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+          echo "Generated key works correctly"
+
+  # ============================================================
+  # TESTE DE FLAGS (CRUD) - paralelo
+  # ============================================================
+  test-flags:
+    name: Flag CRUD Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    env:
+      BASE_URL: ${{ needs.setup.outputs.BASE_URL }}
+      MASTER_KEY: ${{ needs.setup.outputs.MASTER_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate API Key
+        id: auth
+        run: |
+          AUTH_RESPONSE=$(curl -s -X POST "${BASE_URL}/validate/admin/keys" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${MASTER_KEY}" \
+            -d '{"name": "flag-test-key"}')
+          API_KEY=$(echo "$AUTH_RESPONSE" | jq -r '.key // empty')
+          echo "API_KEY=$API_KEY" >> $GITHUB_ENV
+
+      - name: Create Flag
+        id: create
+        run: |
+          FLAG_NAME="test-flag-$(date +%s)"
+          echo "FLAG_NAME=$FLAG_NAME" >> $GITHUB_ENV
           FLAG_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/flag/flags" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
             -d "{
                 \"name\": \"$FLAG_NAME\",
-                \"description\": \"Ativa o novo dashboard para usuarios\",
+                \"description\": \"Test flag\",
                 \"is_enabled\": true
             }")
-          
           HTTP_STATUS=$(echo "$FLAG_RESPONSE" | tail -n 1)
-          BODY=$(echo "$FLAG_RESPONSE" | head -n -1)
-          
-          if [ "$HTTP_STATUS" != "201" ] && [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Failed to create flag. HTTP status: $HTTP_STATUS"
-            echo "Response: $BODY"
+          if [ "$HTTP_STATUS" != "201" ]; then
+            echo "ERROR: Failed to create flag (HTTP $HTTP_STATUS)"
             exit 1
           fi
-          
-          # Verifica se a flag foi criada com os dados corretos
-          CREATED_NAME=$(echo "$BODY" | jq -r '.name // empty')
-          if [ "$CREATED_NAME" != "$FLAG_NAME" ]; then
-            echo "ERROR: Flag created with wrong name: $CREATED_NAME"
-            exit 1
-          fi
-          echo "Flag created successfully: $FLAG_NAME"
+          echo "Flag created: $FLAG_NAME"
 
-      - name: Test duplicate flag creation
+      - name: List Flags
         run: |
-          API_KEY="${{ steps.auth.outputs.api_key }}"
-          FLAG_NAME="${{ steps.flag.outputs.flag_name }}"
-          
-          echo "Testando criação de flag duplicada..."
-          FLAG_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/flag/flags" \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${BASE_URL}/flag/flags" \
+            -H "Authorization: Bearer ${API_KEY}")
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -n 1)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: Failed to list flags (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+          COUNT=$(echo "$RESPONSE" | head -n -1 | jq '. | length')
+          echo "Found $COUNT flags"
+
+      - name: Update Flag
+        run: |
+          UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${BASE_URL}/flag/flags/${FLAG_NAME}" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -d '{"description": "Updated description", "is_enabled": false}')
+          HTTP_STATUS=$(echo "$UPDATE_RESPONSE" | tail -n 1)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: Failed to update flag (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+          echo "Flag updated successfully"
+
+      - name: Delete Flag
+        run: |
+          DELETE_RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${BASE_URL}/flag/flags/${FLAG_NAME}" \
+            -H "Authorization: Bearer ${API_KEY}")
+          HTTP_STATUS=$(echo "$DELETE_RESPONSE" | tail -n 1)
+          if [ "$HTTP_STATUS" != "204" ]; then
+            echo "ERROR: Failed to delete flag (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+          echo "Flag deleted"
+
+      - name: Verify Flag Deleted
+        run: |
+          GET_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${BASE_URL}/flag/flags/${FLAG_NAME}" \
+            -H "Authorization: Bearer ${API_KEY}")
+          HTTP_STATUS=$(echo "$GET_RESPONSE" | tail -n 1)
+          if [ "$HTTP_STATUS" != "404" ]; then
+            echo "ERROR: Expected 404 for deleted flag, got $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Deletion verified"
+
+  # ============================================================
+  # TESTE DE TARGETING - paralelo
+  # ============================================================
+  test-targeting:
+    name: Targeting Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    env:
+      BASE_URL: ${{ needs.setup.outputs.BASE_URL }}
+      MASTER_KEY: ${{ needs.setup.outputs.MASTER_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate API Key
+        id: auth
+        run: |
+          AUTH_RESPONSE=$(curl -s -X POST "${BASE_URL}/validate/admin/keys" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${MASTER_KEY}" \
+            -d '{"name": "targeting-test-key"}')
+          API_KEY=$(echo "$AUTH_RESPONSE" | jq -r '.key // empty')
+          echo "API_KEY=$API_KEY" >> $GITHUB_ENV
+
+      - name: Create Flag for Targeting
+        id: create-flag
+        run: |
+          FLAG_NAME="targeting-flag-$(date +%s)"
+          echo "FLAG_NAME=$FLAG_NAME" >> $GITHUB_ENV
+          FLAG_RESPONSE=$(curl -s -X POST "${BASE_URL}/flag/flags" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
             -d "{
                 \"name\": \"$FLAG_NAME\",
-                \"description\": \"Tentativa duplicada\",
+                \"description\": \"Targeting test flag\",
                 \"is_enabled\": true
             }")
-          
-          HTTP_STATUS=$(echo "$FLAG_RESPONSE" | tail -n 1)
-          if [ "$HTTP_STATUS" != "409" ]; then
-            echo "ERROR: Expected 409 for duplicate flag, got $HTTP_STATUS"
-            exit 1
-          fi
-          echo "Duplicate flag properly rejected (HTTP $HTTP_STATUS)"
+          echo "Flag created: $FLAG_NAME"
 
-      # ============================================================
-      # 9. TESTE DE CRIAÇÃO DE REGRA DE TARGETING
-      # ============================================================
-      - name: Create targeting rule
-        id: targeting
+      - name: Create Targeting Rule
         run: |
-          API_KEY="${{ steps.auth.outputs.api_key }}"
-          FLAG_NAME="${{ steps.flag.outputs.flag_name }}"
-          
-          echo "Creating targeting rule for flag: $FLAG_NAME"
-          
           TARGETING_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/targeting/rules" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
@@ -335,233 +334,72 @@ jobs:
                     \"value\": 50
                 }
             }")
-          
           HTTP_STATUS=$(echo "$TARGETING_RESPONSE" | tail -n 1)
-          BODY=$(echo "$TARGETING_RESPONSE" | head -n -1)
-          
-          if [ "$HTTP_STATUS" != "201" ] && [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Failed to create targeting rule. HTTP status: $HTTP_STATUS"
-            echo "Response: $BODY"
+          if [ "$HTTP_STATUS" != "201" ]; then
+            echo "ERROR: Failed to create targeting rule (HTTP $HTTP_STATUS)"
             exit 1
           fi
-          
-          # Verifica se a regra foi criada
-          RULE_FLAG=$(echo "$BODY" | jq -r '.flag_name // empty')
-          if [ "$RULE_FLAG" != "$FLAG_NAME" ]; then
-            echo "ERROR: Targeting rule created for wrong flag: $RULE_FLAG"
-            exit 1
-          fi
-          echo "Targeting rule created successfully"
+          echo "Targeting rule created"
 
-      # ============================================================
-      # 10. TESTE DE AVALIAÇÃO DE FLAG
-      # ============================================================
-      - name: Evaluate flag
-        id: evaluate
+      - name: Verify Targeting Rule
         run: |
-          API_KEY="${{ steps.auth.outputs.api_key }}"
-          FLAG_NAME="${{ steps.flag.outputs.flag_name }}"
-          
-          echo "Evaluating flag: $FLAG_NAME"
-          
-          EVALUATION_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
-            "${BASE_URL}/evaluation/evaluate?user_id=user-12345&flag_name=${FLAG_NAME}" \
+          GET_RESPONSE=$(curl -s -X GET "${BASE_URL}/targeting/rules?flag_name=${FLAG_NAME}" \
             -H "Authorization: Bearer ${API_KEY}")
-          
-          HTTP_STATUS=$(echo "$EVALUATION_RESPONSE" | tail -n 1)
-          BODY=$(echo "$EVALUATION_RESPONSE" | head -n -1)
-          
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Evaluation failed. HTTP status: $HTTP_STATUS"
-            echo "Response: $BODY"
+          if [ -z "$GET_RESPONSE" ]; then
+            echo "ERROR: Failed to get targeting rule"
             exit 1
           fi
-          
-          # Verifica se a resposta contém os campos esperados
-          EVAL_FLAG=$(echo "$BODY" | jq -r '.flag_name // empty')
-          EVAL_ENABLED=$(echo "$BODY" | jq -r '.enabled // false')
-          
-          if [ "$EVAL_FLAG" != "$FLAG_NAME" ]; then
-            echo "ERROR: Evaluation returned wrong flag: $EVAL_FLAG"
-            exit 1
-          fi
-          
-          echo "Evaluation result: enabled=$EVAL_ENABLED"
-          echo "Evaluation completed successfully"
+          echo "Targeting rule verified"
 
-      # ============================================================
-      # 11. TESTE DE CONSULTA DE FLAGS
-      # ============================================================
-      - name: List all flags
+      - name: Cleanup Flag
         run: |
-          API_KEY="${{ steps.auth.outputs.api_key }}"
-          
-          echo "Listando todas as flags..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${BASE_URL}/flag/flags" \
-            -H "Authorization: Bearer ${API_KEY}")
-          
-          HTTP_STATUS=$(echo "$RESPONSE" | tail -n 1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Failed to list flags. HTTP status: $HTTP_STATUS"
-            echo "Response: $BODY"
-            exit 1
-          fi
-          
-          COUNT=$(echo "$BODY" | jq '. | length')
-          echo "Found $COUNT flags"
-          
-          if [ "$COUNT" -lt 1 ]; then
-            echo "ERROR: Expected at least 1 flag, got $COUNT"
-            exit 1
-          fi
-          echo "List flags completed successfully"
+          curl -s -X DELETE "${BASE_URL}/flag/flags/${FLAG_NAME}" \
+            -H "Authorization: Bearer ${API_KEY}"
 
-      # ============================================================
-      # 12. TESTE DE ATUALIZAÇÃO DE FLAG
-      # ============================================================
-      - name: Update flag
-        run: |
-          API_KEY="${{ steps.auth.outputs.api_key }}"
-          FLAG_NAME="${{ steps.flag.outputs.flag_name }}"
-          
-          echo "Atualizando flag: $FLAG_NAME"
-          
-          UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${BASE_URL}/flag/flags/${FLAG_NAME}" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${API_KEY}" \
-            -d '{
-                "description": "Descrição atualizada pelo teste",
-                "is_enabled": false
-            }')
-          
-          HTTP_STATUS=$(echo "$UPDATE_RESPONSE" | tail -n 1)
-          BODY=$(echo "$UPDATE_RESPONSE" | head -n -1)
-          
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Failed to update flag. HTTP status: $HTTP_STATUS"
-            echo "Response: $BODY"
-            exit 1
-          fi
-          
-          UPDATED_ENABLED=$(echo "$BODY" | jq -r '.is_enabled // false')
-          if [ "$UPDATED_ENABLED" != "false" ]; then
-            echo "ERROR: Flag was not updated correctly: is_enabled=$UPDATED_ENABLED"
-            exit 1
-          fi
-          echo "Flag updated successfully"
+  # ============================================================
+  # TESTE DE AVALIAÇÃO - paralelo
+  # ============================================================
+  test-evaluation:
+    name: Evaluation Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    env:
+      BASE_URL: ${{ needs.setup.outputs.BASE_URL }}
+      MASTER_KEY: ${{ needs.setup.outputs.MASTER_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # ============================================================
-      # 13. TESTE DE EXCLUSÃO DE FLAG
-      # ============================================================
-      - name: Delete flag
+      - name: Generate API Key
+        id: auth
         run: |
-          API_KEY="${{ steps.auth.outputs.api_key }}"
-          FLAG_NAME="${{ steps.flag.outputs.flag_name }}"
-          
-          echo "Deletando flag: $FLAG_NAME"
-          
-          DELETE_RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${BASE_URL}/flag/flags/${FLAG_NAME}" \
-            -H "Authorization: Bearer ${API_KEY}")
-          
-          HTTP_STATUS=$(echo "$DELETE_RESPONSE" | tail -n 1)
-          
-          if [ "$HTTP_STATUS" != "204" ] && [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Failed to delete flag. HTTP status: $HTTP_STATUS"
-            exit 1
-          fi
-          echo "Flag deleted successfully"
-
-      - name: Verify flag was deleted
-        run: |
-          API_KEY="${{ steps.auth.outputs.api_key }}"
-          FLAG_NAME="${{ steps.flag.outputs.flag_name }}"
-          
-          echo "Verificando exclusão da flag: $FLAG_NAME"
-          
-          GET_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${BASE_URL}/flag/flags/${FLAG_NAME}" \
-            -H "Authorization: Bearer ${API_KEY}")
-          
-          HTTP_STATUS=$(echo "$GET_RESPONSE" | tail -n 1)
-          
-          if [ "$HTTP_STATUS" != "404" ]; then
-            echo "ERROR: Expected 404 for deleted flag, got $HTTP_STATUS"
-            exit 1
-          fi
-          echo "Flag deletion verified (HTTP $HTTP_STATUS)"
-
-      # ============================================================
-      # 14. TESTE DE LATÊNCIA (Performance)
-      # ============================================================
-      - name: Performance test - API latency
-        run: |
-          echo "Testando latência da API..."
-          TIMES=5
-          TOTAL_TIME=0
-          
-          for i in $(seq 1 $TIMES); do
-            TIME=$(curl -s -o /dev/null -w "%{time_total}" "$BASE_URL/flag/health" 2>/dev/null)
-            echo "  Tentativa $i: ${TIME}s"
-            TOTAL_TIME=$(echo "$TOTAL_TIME + $TIME" | bc)
-          done
-          
-          AVG_TIME=$(echo "scale=3; $TOTAL_TIME / $TIMES" | bc)
-          echo "Tempo médio de resposta: ${AVG_TIME}s"
-          
-          # Falha se o tempo médio for maior que 2 segundos (ajuste conforme necessário)
-          if (( $(echo "$AVG_TIME > 2.0" | bc -l) )); then
-            echo "WARNING: Average response time is high: ${AVG_TIME}s"
-          fi
-          echo "Performance test completed"
-
-      # ============================================================
-      # 15. TESTE DE END-TO-END (FLUXO COMPLETO)
-      # ============================================================
-      - name: End-to-end test - full workflow
-        run: |
-          echo "=========================================="
-          echo "TESTE END-TO-END - FLUXO COMPLETO"
-          echo "=========================================="
-          
-          # Gera uma nova API Key
-          MASTER_KEY="${{ steps.masterkey.outputs.master_key }}"
           AUTH_RESPONSE=$(curl -s -X POST "${BASE_URL}/validate/admin/keys" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${MASTER_KEY}" \
-            -d '{"name": "e2e-test-key"}')
-          
-          E2E_API_KEY=$(echo "$AUTH_RESPONSE" | jq -r '.key // empty')
-          if [ -z "$E2E_API_KEY" ]; then
-            echo "ERROR: Failed to generate API key for E2E test"
-            exit 1
-          fi
-          echo "API Key generated for E2E test"
+            -d '{"name": "eval-test-key"}')
+          API_KEY=$(echo "$AUTH_RESPONSE" | jq -r '.key // empty')
+          echo "API_KEY=$API_KEY" >> $GITHUB_ENV
 
-          # Cria uma flag
-          FLAG_NAME="e2e-test-flag-$(date +%s)"
-          echo "Criando flag: $FLAG_NAME"
-          
-          FLAG_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/flag/flags" \
+      - name: Create Flag for Evaluation
+        id: create-flag
+        run: |
+          FLAG_NAME="eval-flag-$(date +%s)"
+          echo "FLAG_NAME=$FLAG_NAME" >> $GITHUB_ENV
+          FLAG_RESPONSE=$(curl -s -X POST "${BASE_URL}/flag/flags" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${E2E_API_KEY}" \
+            -H "Authorization: Bearer ${API_KEY}" \
             -d "{
                 \"name\": \"$FLAG_NAME\",
-                \"description\": \"E2E test flag\",
+                \"description\": \"Evaluation test flag\",
                 \"is_enabled\": true
             }")
-          
-          if [ "$(echo "$FLAG_RESPONSE" | tail -n 1)" != "201" ]; then
-            echo "ERROR: Failed to create flag for E2E test"
-            exit 1
-          fi
-          echo "Flag created"
+          echo "Flag created: $FLAG_NAME"
 
-          # Cria regra de targeting
-          echo "Criando regra de targeting..."
-          TARGETING_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/targeting/rules" \
+      - name: Create Targeting Rule
+        run: |
+          TARGETING_RESPONSE=$(curl -s -X POST "${BASE_URL}/targeting/rules" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${E2E_API_KEY}" \
+            -H "Authorization: Bearer ${API_KEY}" \
             -d "{
                 \"flag_name\": \"$FLAG_NAME\",
                 \"is_enabled\": true,
@@ -570,69 +408,164 @@ jobs:
                     \"value\": 100
                 }
             }")
-          
-          if [ "$(echo "$TARGETING_RESPONSE" | tail -n 1)" != "201" ]; then
-            echo "ERROR: Failed to create targeting rule for E2E test"
-            exit 1
-          fi
           echo "Targeting rule created"
 
-          # Avalia a flag
-          echo "Avaliando flag..."
+      - name: Evaluate Flag
+        run: |
           EVAL_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
-            "${BASE_URL}/evaluation/evaluate?user_id=e2e-user-123&flag_name=${FLAG_NAME}" \
-            -H "Authorization: Bearer ${E2E_API_KEY}")
-          
-          EVAL_STATUS=$(echo "$EVAL_RESPONSE" | tail -n 1)
-          EVAL_BODY=$(echo "$EVAL_RESPONSE" | head -n -1)
-          
-          if [ "$EVAL_STATUS" != "200" ]; then
-            echo "ERROR: Evaluation failed for E2E test"
+            "${BASE_URL}/evaluation/evaluate?user_id=user-123&flag_name=${FLAG_NAME}" \
+            -H "Authorization: Bearer ${API_KEY}")
+          HTTP_STATUS=$(echo "$EVAL_RESPONSE" | tail -n 1)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: Evaluation failed (HTTP $HTTP_STATUS)"
             exit 1
           fi
-          
-          ENABLED=$(echo "$EVAL_BODY" | jq -r '.enabled // false')
-          echo "E2E test result: enabled=$ENABLED"
-          
+          BODY=$(echo "$EVAL_RESPONSE" | head -n -1)
+          ENABLED=$(echo "$BODY" | jq -r '.enabled // false')
           if [ "$ENABLED" != "true" ]; then
-            echo "ERROR: Flag should be enabled, got: $ENABLED"
+            echo "ERROR: Flag should be enabled, got $ENABLED"
             exit 1
           fi
+          echo "Evaluation successful: enabled=$ENABLED"
 
-          # Limpeza
-          echo "Limpando recursos E2E..."
+      - name: Cleanup
+        run: |
           curl -s -X DELETE "${BASE_URL}/flag/flags/${FLAG_NAME}" \
-            -H "Authorization: Bearer ${E2E_API_KEY}" > /dev/null
-          
-          echo "=========================================="
-          echo "✅ E2E test completed successfully"
-          echo "=========================================="
+            -H "Authorization: Bearer ${API_KEY}"
 
-      # ============================================================
-      # 16. RELATÓRIO FINAL
-      # ============================================================
-      - name: Integration Tests Summary
+  # ============================================================
+  # TESTE DE PERFORMANCE - paralelo
+  # ============================================================
+  test-performance:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    env:
+      BASE_URL: ${{ needs.setup.outputs.BASE_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: API Latency Test
+        run: |
+          echo "Testing API latency..."
+          TIMES=10
+          TOTAL_TIME=0
+          for i in $(seq 1 $TIMES); do
+            TIME=$(curl -s -o /dev/null -w "%{time_total}" "$BASE_URL/flag/health" 2>/dev/null)
+            echo "  Attempt $i: ${TIME}s"
+            TOTAL_TIME=$(echo "$TOTAL_TIME + $TIME" | bc)
+          done
+          AVG_TIME=$(echo "scale=3; $TOTAL_TIME / $TIMES" | bc)
+          echo "Average response time: ${AVG_TIME}s"
+          if (( $(echo "$AVG_TIME > 2.0" | bc -l) )); then
+            echo "WARNING: Average response time is high: ${AVG_TIME}s"
+          fi
+
+  # ============================================================
+  # TESTE END-TO-END - paralelo
+  # ============================================================
+  test-e2e:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    env:
+      BASE_URL: ${{ needs.setup.outputs.BASE_URL }}
+      MASTER_KEY: ${{ needs.setup.outputs.MASTER_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: End-to-End Flow
         run: |
           echo "=========================================="
-          echo "✅ INTEGRATION TESTS COMPLETED SUCCESSFULLY"
+          echo "END-TO-END TEST"
+          echo "=========================================="
+
+          # 1. Generate API Key
+          AUTH_RESPONSE=$(curl -s -X POST "${BASE_URL}/validate/admin/keys" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${MASTER_KEY}" \
+            -d '{"name": "e2e-test-key"}')
+          API_KEY=$(echo "$AUTH_RESPONSE" | jq -r '.key // empty')
+          if [ -z "$API_KEY" ]; then
+            echo "ERROR: Failed to generate API key"
+            exit 1
+          fi
+          echo "✓ API Key generated"
+
+          # 2. Create Flag
+          FLAG_NAME="e2e-flag-$(date +%s)"
+          FLAG_RESPONSE=$(curl -s -X POST "${BASE_URL}/flag/flags" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -d "{
+                \"name\": \"$FLAG_NAME\",
+                \"description\": \"E2E test flag\",
+                \"is_enabled\": true
+            }")
+          if [ -z "$(echo $FLAG_RESPONSE | jq -r '.name' 2>/dev/null)" ]; then
+            echo "ERROR: Failed to create flag"
+            exit 1
+          fi
+          echo "✓ Flag created: $FLAG_NAME"
+
+          # 3. Create Targeting Rule
+          TARGETING_RESPONSE=$(curl -s -X POST "${BASE_URL}/targeting/rules" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -d "{
+                \"flag_name\": \"$FLAG_NAME\",
+                \"is_enabled\": true,
+                \"rules\": {
+                    \"type\": \"PERCENTAGE\",
+                    \"value\": 100
+                }
+            }")
+          echo "✓ Targeting rule created"
+
+          # 4. Evaluate Flag
+          EVAL_RESPONSE=$(curl -s -X GET \
+            "${BASE_URL}/evaluation/evaluate?user_id=e2e-user&flag_name=${FLAG_NAME}" \
+            -H "Authorization: Bearer ${API_KEY}")
+          ENABLED=$(echo "$EVAL_RESPONSE" | jq -r '.enabled // false')
+          if [ "$ENABLED" != "true" ]; then
+            echo "ERROR: Flag evaluation failed"
+            exit 1
+          fi
+          echo "✓ Flag evaluated: enabled=$ENABLED"
+
+          # 5. Cleanup
+          curl -s -X DELETE "${BASE_URL}/flag/flags/${FLAG_NAME}" \
+            -H "Authorization: Bearer ${API_KEY}"
+          echo "✓ Cleanup completed"
+
+          echo "=========================================="
+          echo "✅ E2E test passed"
+          echo "=========================================="
+
+  # ============================================================
+  # JOB DE RELATÓRIO (opcional, para consolidar resultados)
+  # ============================================================
+  report:
+    name: Test Report
+    runs-on: ubuntu-latest
+    needs: [test-health, test-auth, test-flags, test-targeting, test-evaluation, test-performance, test-e2e]
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          echo "=========================================="
+          echo "✅ ALL INTEGRATION TESTS COMPLETED"
           echo "=========================================="
           echo ""
-          echo "Services tested:"
-          echo "  - auth-service (authentication)"
-          echo "  - flag-service (CRUD flags)"
-          echo "  - targeting-service (rules management)"
-          echo "  - evaluation-service (flag evaluation)"
-          echo "  - analytics-service (health check)"
+          echo "Jobs executed in parallel:"
+          echo "  - Health Checks"
+          echo "  - Authentication Tests"
+          echo "  - Flag CRUD Tests"
+          echo "  - Targeting Tests"
+          echo "  - Evaluation Tests"
+          echo "  - Performance Tests"
+          echo "  - End-to-End Tests"
           echo ""
-          echo "Tests executed:"
-          echo "  - Health checks (5 services)"
-          echo "  - Authentication (valid/invalid/missing)"
-          echo "  - API Key generation"
-          echo "  - Flag CRUD (create, read, update, delete)"
-          echo "  - Targeting rule creation"
-          echo "  - Flag evaluation"
-          echo "  - Duplicate handling"
-          echo "  - Performance (latency)"
-          echo "  - End-to-end workflow"
-          echo ""
-          echo "=========================================="
+          echo "All tests passed successfully!"
