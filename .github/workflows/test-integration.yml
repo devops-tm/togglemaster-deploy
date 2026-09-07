@@ -1,4 +1,4 @@
-name: Integration Tests (Parallel)
+name: Integration Tests Parallel
 
 on:
   workflow_dispatch:
@@ -43,64 +43,46 @@ jobs:
           aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
           kubectl cluster-info
 
-      - name: Wait for Ingress Controller (with debug)
+      - name: Wait for Ingress Controller
         run: |
           echo "Aguardando Ingress Controller..."
           kubectl wait --for=condition=available deployment/ingress-nginx-controller -n ingress-nginx --timeout=120s || true
           echo "Pods do Ingress:"
           kubectl get pods -n ingress-nginx
 
-      - name: Get Ingress Service Type and LoadBalancer URL
+      - name: Get Ingress LoadBalancer Hostname
         id: get-ingress
         run: |
           echo "Detalhes do serviço ingress-nginx-controller:"
           kubectl get svc ingress-nginx-controller -n ingress-nginx -o yaml
 
-          SERVICE_TYPE=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.type}')
-          echo "Service type: $SERVICE_TYPE"
-
-          if [ "$SERVICE_TYPE" != "LoadBalancer" ]; then
-            echo "WARNING: Service is not LoadBalancer (type=$SERVICE_TYPE). Attempting to get NodePort..."
-            NODEPORT=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}')
-            if [ -z "$NODEPORT" ]; then
-              echo "ERROR: Could not find NodePort"
-              exit 1
-            fi
-            echo "NodePort found: $NODEPORT"
-            # Tentar obter IP do nó
-            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-            if [ -z "$NODE_IP" ]; then
-              echo "ERROR: Could not get node IP"
-              exit 1
-            fi
-            INGRESS_URL="$NODE_IP:$NODEPORT"
-            echo "Using NodePort fallback: $INGRESS_URL"
-          else
-            INGRESS_URL=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-            if [ -z "$INGRESS_URL" ]; then
-              echo "ERROR: LoadBalancer hostname not assigned yet"
-              exit 1
-            fi
-            echo "LoadBalancer hostname: $INGRESS_URL"
+          # Extrai o hostname do LoadBalancer
+          HOSTNAME=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o json | jq -r '.status.loadBalancer.ingress[0].hostname // empty')
+          if [ -z "$HOSTNAME" ]; then
+            echo "ERROR: Could not retrieve LoadBalancer hostname"
+            # Opcional: exibe a saída JSON para debug
+            echo "Saída JSON do Service:"
+            kubectl get svc ingress-nginx-controller -n ingress-nginx -o json
+            exit 1
           fi
-
-          echo "ingress_url=$INGRESS_URL" >> $GITHUB_OUTPUT
+          echo "LoadBalancer hostname: $HOSTNAME"
+          echo "ingress_url=$HOSTNAME" >> $GITHUB_OUTPUT
 
       - name: Set BASE_URL
         id: set-base-url
         run: |
           INGRESS_URL="${{ steps.get-ingress.outputs.ingress_url }}"
-          # Se INGRESS_URL já contiver http, use como está, senão adicione http://
-          if [[ "$INGRESS_URL" =~ ^https?:// ]]; then
-            BASE_URL="$INGRESS_URL"
-          else
-            BASE_URL="http://$INGRESS_URL"
-          fi
+          BASE_URL="http://$INGRESS_URL"
           echo "BASE_URL=$BASE_URL" >> $GITHUB_OUTPUT
           echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
           echo "BASE_URL definida como: $BASE_URL"
 
-      - name: Get Master Key from Kubernetes secret
+          if [ -z "$BASE_URL" ]; then
+            echo "ERROR: BASE_URL is empty after setting"
+            exit 1
+          fi
+
+      - name: Get Master Key
         id: get-master-key
         run: |
           MASTER_KEY=$(kubectl get secret togglemaster-secrets -n togglemaster -o jsonpath="{.data.MASTER_KEY}" 2>/dev/null | base64 --decode)
@@ -109,7 +91,6 @@ jobs:
             exit 1
           fi
           echo "MASTER_KEY=$MASTER_KEY" >> $GITHUB_OUTPUT
-          # Mascarar a chave nos logs (opcional)
           echo "MASTER_KEY retrieved (masked)"
           echo "MASTER_KEY=${MASTER_KEY:0:4}...${MASTER_KEY: -4}" >> $GITHUB_STEP_SUMMARY
 
