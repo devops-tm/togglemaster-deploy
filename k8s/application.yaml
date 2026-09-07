@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/${{ github.repository }}
+    repoURL: ${REPO_URL}
     targetRevision: deploy
     path: k8s/overlays/prod
   destination:
