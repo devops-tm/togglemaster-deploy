@@ -39,7 +39,7 @@ jobs:
       - name: Get Ingress NodePort
         id: nodeport
         run: |
-          NODEPORT=$(kubectl get svc ingress-nginx-controller -n togglemaster -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}' 2>/dev/null)
+          NODEPORT=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}' 2>/dev/null)
           
           if [ -z "$NODEPORT" ]; then
             echo "ERROR: Could not find Ingress NodePort"
