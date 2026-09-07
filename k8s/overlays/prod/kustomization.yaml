@@ -49,7 +49,7 @@ patches:
 images:
 - name: analytics-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/analytics-service
-  newTag: 19922264c88fad88263c79ba97128532bc5cb8a7
+  newTag: eee21151d7b1d7a797eb26c4e936a5a53c934731
 - name: auth-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/auth-service
   newTag: 64d563bfd0393d0c6ff167abb3a3a6fdfa671f98
