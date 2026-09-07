@@ -72,9 +72,16 @@ jobs:
             --from-literal=AWS_DYNAMODB_TABLE="ToggleMasterAnalytics" \
             --dry-run=client -o yaml | kubectl apply -f -
           
-      - name: Restart deployments
+      - name: Restart deployments (if exist)
         run: |
-          kubectl rollout restart deployment auth-service flag-service targeting-service evaluation-service analytics-service -n togglemaster
+          for DEPLOY in auth-service flag-service targeting-service evaluation-service analytics-service; do
+            if kubectl get deployment "$DEPLOY" -n togglemaster &>/dev/null; then
+              echo "Restarting $DEPLOY..."
+              kubectl rollout restart deployment "$DEPLOY" -n togglemaster
+            else
+              echo "Deployment $DEPLOY not found. Skipping."
+            fi
+          done
 
   jobs:
     name: Apply DB Init Jobs
