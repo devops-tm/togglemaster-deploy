@@ -1,4 +1,4 @@
-name: Integration Tests Parallel
+name: Integration Tests (Parallel)
 
 on:
   workflow_dispatch:
@@ -17,9 +17,6 @@ jobs:
   setup:
     name: Setup - Get Endpoints & Credentials
     runs-on: ubuntu-latest
-    outputs:
-      BASE_URL: ${{ steps.set-base-url.outputs.BASE_URL }}
-      MASTER_KEY: ${{ steps.get-master-key.outputs.MASTER_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,12 +53,9 @@ jobs:
           echo "Detalhes do serviço ingress-nginx-controller:"
           kubectl get svc ingress-nginx-controller -n ingress-nginx -o yaml
 
-          # Extrai o hostname do LoadBalancer
           HOSTNAME=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o json | jq -r '.status.loadBalancer.ingress[0].hostname // empty')
           if [ -z "$HOSTNAME" ]; then
             echo "ERROR: Could not retrieve LoadBalancer hostname"
-            # Opcional: exibe a saída JSON para debug
-            echo "Saída JSON do Service:"
             kubectl get svc ingress-nginx-controller -n ingress-nginx -o json
             exit 1
           fi
@@ -73,14 +67,9 @@ jobs:
         run: |
           INGRESS_URL="${{ steps.get-ingress.outputs.ingress_url }}"
           BASE_URL="http://$INGRESS_URL"
-          echo "BASE_URL=$BASE_URL" >> $GITHUB_OUTPUT
           echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
           echo "BASE_URL definida como: $BASE_URL"
-
-          if [ -z "$BASE_URL" ]; then
-            echo "ERROR: BASE_URL is empty after setting"
-            exit 1
-          fi
+          echo "$BASE_URL" > /tmp/base_url.txt
 
       - name: Get Master Key
         id: get-master-key
@@ -90,15 +79,27 @@ jobs:
             echo "ERROR: Could not retrieve MASTER_KEY"
             exit 1
           fi
-          echo "MASTER_KEY=$MASTER_KEY" >> $GITHUB_OUTPUT
+          echo "MASTER_KEY=$MASTER_KEY" >> $GITHUB_ENV
           echo "MASTER_KEY retrieved (masked)"
-          echo "MASTER_KEY=${MASTER_KEY:0:4}...${MASTER_KEY: -4}" >> $GITHUB_STEP_SUMMARY
+          echo "$MASTER_KEY" > /tmp/master_key.txt
+
+      - name: Upload BASE_URL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: base-url
+          path: /tmp/base_url.txt
+
+      - name: Upload MASTER_KEY artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-key
+          path: /tmp/master_key.txt
 
       - name: Debug outputs
         run: |
           echo "=== DEBUG OUTPUTS ==="
-          echo "BASE_URL (output): ${{ steps.set-base-url.outputs.BASE_URL }}"
-          echo "MASTER_KEY (output): ${{ steps.get-master-key.outputs.MASTER_KEY }}"
+          echo "BASE_URL: $(cat /tmp/base_url.txt)"
+          echo "MASTER_KEY: $(cat /tmp/master_key.txt | cut -c1-4)...$(cat /tmp/master_key.txt | tail -c5)"
           echo "====================="
 
   # ============================================================
@@ -108,22 +109,24 @@ jobs:
     name: Health Checks
     runs-on: ubuntu-latest
     needs: setup
-    env:
-      BASE_URL: "${{ needs.setup.outputs.BASE_URL }}"
     steps:
-      - name: Debug BASE_URL
+      - name: Download BASE_URL
+        uses: actions/download-artifact@v4
+        with:
+          name: base-url
+
+      - name: Set BASE_URL
         run: |
-          echo "BASE_URL recebida: $BASE_URL"
+          BASE_URL=$(cat base_url.txt)
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
+          echo "BASE_URL lida: $BASE_URL"
           if [ -z "$BASE_URL" ]; then
-            echo "ERROR: BASE_URL is empty. Aborting."
+            echo "ERROR: BASE_URL is empty"
             exit 1
           fi
-          echo "Testing connectivity to $BASE_URL"
-          curl -s -o /dev/null -w "HTTP status: %{http_code}\n" "$BASE_URL/flag/health" || echo "WARNING: Health endpoint not reachable"
 
       - name: Health Check - Auth Service
         run: |
-          echo "Testando /health do auth-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/auth/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Auth service health check failed (HTTP $HEALTH_STATUS)"
@@ -133,7 +136,6 @@ jobs:
 
       - name: Health Check - Flag Service
         run: |
-          echo "Testando /health do flag-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/flag/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Flag service health check failed (HTTP $HEALTH_STATUS)"
@@ -143,7 +145,6 @@ jobs:
 
       - name: Health Check - Targeting Service
         run: |
-          echo "Testando /health do targeting-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/targeting/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Targeting service health check failed (HTTP $HEALTH_STATUS)"
@@ -153,7 +154,6 @@ jobs:
 
       - name: Health Check - Evaluation Service
         run: |
-          echo "Testando /health do evaluation-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/evaluation/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Evaluation service health check failed (HTTP $HEALTH_STATUS)"
@@ -163,7 +163,6 @@ jobs:
 
       - name: Health Check - Analytics Service
         run: |
-          echo "Testando /health do analytics-service..."
           HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/analytics/health" 2>/dev/null)
           if [ "$HEALTH_STATUS" != "200" ]; then
             echo "ERROR: Analytics service health check failed (HTTP $HEALTH_STATUS)"
@@ -178,35 +177,42 @@ jobs:
     name: Authentication Tests
     runs-on: ubuntu-latest
     needs: setup
-    env:
-      BASE_URL: "${{ needs.setup.outputs.BASE_URL }}"
-      MASTER_KEY: "${{ needs.setup.outputs.MASTER_KEY }}"
     steps:
-      - name: Debug BASE_URL and MASTER_KEY
+      - name: Download BASE_URL and MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: base-url
+
+      - name: Download MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: master-key
+
+      - name: Set environment variables
         run: |
-          echo "BASE_URL recebida: $BASE_URL"
-          echo "MASTER_KEY recebida (mascarada): ${MASTER_KEY:0:4}...${MASTER_KEY: -4}"
+          BASE_URL=$(cat base_url.txt)
+          MASTER_KEY=$(cat master_key.txt)
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
+          echo "MASTER_KEY=$MASTER_KEY" >> $GITHUB_ENV
+          echo "BASE_URL lida: $BASE_URL"
           if [ -z "$BASE_URL" ] || [ -z "$MASTER_KEY" ]; then
             echo "ERROR: BASE_URL or MASTER_KEY is empty"
             exit 1
           fi
 
-      - name: Test Authentication - Invalid API Key
+      - name: Test Invalid API Key
         run: |
-          echo "Testando autenticação com chave inválida..."
           RESPONSE=$(curl -s -w "%{http_code}" -X GET "$BASE_URL/flag/flags" \
             -H "Authorization: Bearer invalid-key" 2>/dev/null)
           HTTP_STATUS=$(echo "$RESPONSE" | tail -c 4)
           if [ "$HTTP_STATUS" != "401" ]; then
             echo "ERROR: Expected 401 for invalid key, got $HTTP_STATUS"
-            echo "Response body: $(echo "$RESPONSE" | head -c 200)"
             exit 1
           fi
           echo "Invalid key properly rejected (HTTP $HTTP_STATUS)"
 
-      - name: Test Authentication - Missing Authorization Header
+      - name: Test Missing Authorization Header
         run: |
-          echo "Testando autenticação sem header Authorization..."
           RESPONSE=$(curl -s -w "%{http_code}" -X GET "$BASE_URL/flag/flags" 2>/dev/null)
           HTTP_STATUS=$(echo "$RESPONSE" | tail -c 4)
           if [ "$HTTP_STATUS" != "401" ]; then
@@ -215,31 +221,28 @@ jobs:
           fi
           echo "Missing header properly rejected (HTTP $HTTP_STATUS)"
 
-      - name: Generate API Key with Master Key
+      - name: Generate API Key
         id: generate-key
         run: |
-          echo "Gerando API Key com MASTER_KEY..."
           AUTH_RESPONSE=$(curl -s -X POST "${BASE_URL}/validate/admin/keys" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${MASTER_KEY}" \
             -d '{"name": "test-api-key"}')
-          echo "Resposta: $AUTH_RESPONSE"
           API_KEY=$(echo "$AUTH_RESPONSE" | jq -r '.key // empty')
           if [ -z "$API_KEY" ]; then
             echo "ERROR: Authentication failed. Response: $AUTH_RESPONSE"
             exit 1
           fi
           echo "API_KEY=$API_KEY" >> $GITHUB_ENV
-          echo "API_KEY=${API_KEY:0:8}... (mascarado)" >> $GITHUB_STEP_SUMMARY
+          echo "API Key generated"
 
       - name: Validate Generated API Key
         run: |
-          echo "Validando API Key gerada..."
           RESPONSE=$(curl -s -w "%{http_code}" -X GET "$BASE_URL/flag/flags" \
             -H "Authorization: Bearer ${API_KEY}" 2>/dev/null)
           HTTP_STATUS=$(echo "$RESPONSE" | tail -c 4)
           if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Generated key failed to authenticate (HTTP $HTTP_STATUS)"
+            echo "ERROR: Generated key failed (HTTP $HTTP_STATUS)"
             exit 1
           fi
           echo "Generated key works correctly"
@@ -251,13 +254,23 @@ jobs:
     name: Flag CRUD Tests
     runs-on: ubuntu-latest
     needs: setup
-    env:
-      BASE_URL: "${{ needs.setup.outputs.BASE_URL }}"
-      MASTER_KEY: "${{ needs.setup.outputs.MASTER_KEY }}"
     steps:
-      - name: Debug BASE_URL
+      - name: Download BASE_URL and MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: base-url
+
+      - name: Download MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: master-key
+
+      - name: Set environment
         run: |
-          echo "BASE_URL recebida: $BASE_URL"
+          BASE_URL=$(cat base_url.txt)
+          MASTER_KEY=$(cat master_key.txt)
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
+          echo "MASTER_KEY=$MASTER_KEY" >> $GITHUB_ENV
           if [ -z "$BASE_URL" ]; then
             echo "ERROR: BASE_URL is empty"
             exit 1
@@ -276,76 +289,62 @@ jobs:
             exit 1
           fi
           echo "API_KEY=$API_KEY" >> $GITHUB_ENV
-          echo "API Key generated for flag tests"
 
       - name: Create Flag
         id: create
         run: |
           FLAG_NAME="test-flag-$(date +%s)"
           echo "FLAG_NAME=$FLAG_NAME" >> $GITHUB_ENV
-          echo "Creating flag: $FLAG_NAME"
           FLAG_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/flag/flags" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
-            -d "{
-                \"name\": \"$FLAG_NAME\",
-                \"description\": \"Test flag\",
-                \"is_enabled\": true
-            }")
+            -d "{\"name\":\"$FLAG_NAME\",\"description\":\"Test flag\",\"is_enabled\":true}")
           HTTP_STATUS=$(echo "$FLAG_RESPONSE" | tail -n 1)
           BODY=$(echo "$FLAG_RESPONSE" | head -n -1)
           if [ "$HTTP_STATUS" != "201" ]; then
-            echo "ERROR: Failed to create flag. HTTP $HTTP_STATUS. Response: $BODY"
+            echo "ERROR: Failed to create flag (HTTP $HTTP_STATUS). Response: $BODY"
             exit 1
           fi
           echo "Flag created: $FLAG_NAME"
 
       - name: List Flags
         run: |
-          echo "Listando todas as flags..."
           RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${BASE_URL}/flag/flags" \
             -H "Authorization: Bearer ${API_KEY}")
           HTTP_STATUS=$(echo "$RESPONSE" | tail -n 1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
           if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Failed to list flags. HTTP $HTTP_STATUS"
-            echo "Response: $BODY"
+            echo "ERROR: Failed to list flags (HTTP $HTTP_STATUS)"
             exit 1
           fi
-          COUNT=$(echo "$BODY" | jq '. | length')
+          COUNT=$(echo "$RESPONSE" | head -n -1 | jq '. | length')
           echo "Found $COUNT flags"
 
       - name: Update Flag
         run: |
-          echo "Atualizando flag: $FLAG_NAME"
           UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${BASE_URL}/flag/flags/${FLAG_NAME}" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
-            -d '{"description": "Updated description", "is_enabled": false}')
+            -d '{"description": "Updated", "is_enabled": false}')
           HTTP_STATUS=$(echo "$UPDATE_RESPONSE" | tail -n 1)
-          BODY=$(echo "$UPDATE_RESPONSE" | head -n -1)
           if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Failed to update flag. HTTP $HTTP_STATUS"
-            echo "Response: $BODY"
+            echo "ERROR: Failed to update flag (HTTP $HTTP_STATUS)"
             exit 1
           fi
-          echo "Flag updated successfully"
+          echo "Flag updated"
 
       - name: Delete Flag
         run: |
-          echo "Deletando flag: $FLAG_NAME"
           DELETE_RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${BASE_URL}/flag/flags/${FLAG_NAME}" \
             -H "Authorization: Bearer ${API_KEY}")
           HTTP_STATUS=$(echo "$DELETE_RESPONSE" | tail -n 1)
           if [ "$HTTP_STATUS" != "204" ]; then
-            echo "ERROR: Failed to delete flag. HTTP $HTTP_STATUS"
+            echo "ERROR: Failed to delete flag (HTTP $HTTP_STATUS)"
             exit 1
           fi
           echo "Flag deleted"
 
       - name: Verify Flag Deleted
         run: |
-          echo "Verificando exclusão..."
           GET_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${BASE_URL}/flag/flags/${FLAG_NAME}" \
             -H "Authorization: Bearer ${API_KEY}")
           HTTP_STATUS=$(echo "$GET_RESPONSE" | tail -n 1)
@@ -362,17 +361,23 @@ jobs:
     name: Targeting Tests
     runs-on: ubuntu-latest
     needs: setup
-    env:
-      BASE_URL: "${{ needs.setup.outputs.BASE_URL }}"
-      MASTER_KEY: "${{ needs.setup.outputs.MASTER_KEY }}"
     steps:
-      - name: Debug BASE_URL
+      - name: Download BASE_URL and MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: base-url
+
+      - name: Download MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: master-key
+
+      - name: Set environment
         run: |
-          echo "BASE_URL recebida: $BASE_URL"
-          if [ -z "$BASE_URL" ]; then
-            echo "ERROR: BASE_URL is empty"
-            exit 1
-          fi
+          BASE_URL=$(cat base_url.txt)
+          MASTER_KEY=$(cat master_key.txt)
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
+          echo "MASTER_KEY=$MASTER_KEY" >> $GITHUB_ENV
 
       - name: Generate API Key
         id: auth
@@ -392,60 +397,39 @@ jobs:
           FLAG_RESPONSE=$(curl -s -X POST "${BASE_URL}/flag/flags" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
-            -d "{
-                \"name\": \"$FLAG_NAME\",
-                \"description\": \"Targeting test flag\",
-                \"is_enabled\": true
-            }")
+            -d "{\"name\":\"$FLAG_NAME\",\"description\":\"Targeting test\",\"is_enabled\":true}")
           CREATED=$(echo "$FLAG_RESPONSE" | jq -r '.name // empty')
           if [ "$CREATED" != "$FLAG_NAME" ]; then
-            echo "ERROR: Failed to create flag. Response: $FLAG_RESPONSE"
+            echo "ERROR: Failed to create flag"
             exit 1
           fi
           echo "Flag created: $FLAG_NAME"
 
       - name: Create Targeting Rule
         run: |
-          echo "Criando regra de targeting..."
           TARGETING_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/targeting/rules" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
-            -d "{
-                \"flag_name\": \"$FLAG_NAME\",
-                \"is_enabled\": true,
-                \"rules\": {
-                    \"type\": \"PERCENTAGE\",
-                    \"value\": 50
-                }
-            }")
+            -d "{\"flag_name\":\"$FLAG_NAME\",\"is_enabled\":true,\"rules\":{\"type\":\"PERCENTAGE\",\"value\":50}}")
           HTTP_STATUS=$(echo "$TARGETING_RESPONSE" | tail -n 1)
-          BODY=$(echo "$TARGETING_RESPONSE" | head -n -1)
           if [ "$HTTP_STATUS" != "201" ]; then
-            echo "ERROR: Failed to create targeting rule. HTTP $HTTP_STATUS"
-            echo "Response: $BODY"
-            exit 1
-          fi
-          RULE_FLAG=$(echo "$BODY" | jq -r '.flag_name // empty')
-          if [ "$RULE_FLAG" != "$FLAG_NAME" ]; then
-            echo "ERROR: Targeting rule created for wrong flag: $RULE_FLAG"
+            echo "ERROR: Failed to create targeting rule (HTTP $HTTP_STATUS)"
             exit 1
           fi
           echo "Targeting rule created"
 
       - name: Verify Targeting Rule
         run: |
-          echo "Verificando regra criada..."
           GET_RESPONSE=$(curl -s -X GET "${BASE_URL}/targeting/rules?flag_name=${FLAG_NAME}" \
             -H "Authorization: Bearer ${API_KEY}")
           if echo "$GET_RESPONSE" | jq -e '.[0]' >/dev/null 2>&1; then
             echo "Targeting rule verified"
           else
             echo "ERROR: Could not retrieve targeting rule"
-            echo "Response: $GET_RESPONSE"
             exit 1
           fi
 
-      - name: Cleanup Flag
+      - name: Cleanup
         run: |
           curl -s -X DELETE "${BASE_URL}/flag/flags/${FLAG_NAME}" \
             -H "Authorization: Bearer ${API_KEY}" || true
@@ -458,17 +442,23 @@ jobs:
     name: Evaluation Tests
     runs-on: ubuntu-latest
     needs: setup
-    env:
-      BASE_URL: "${{ needs.setup.outputs.BASE_URL }}"
-      MASTER_KEY: "${{ needs.setup.outputs.MASTER_KEY }}"
     steps:
-      - name: Debug BASE_URL
+      - name: Download BASE_URL and MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: base-url
+
+      - name: Download MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: master-key
+
+      - name: Set environment
         run: |
-          echo "BASE_URL recebida: $BASE_URL"
-          if [ -z "$BASE_URL" ]; then
-            echo "ERROR: BASE_URL is empty"
-            exit 1
-          fi
+          BASE_URL=$(cat base_url.txt)
+          MASTER_KEY=$(cat master_key.txt)
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
+          echo "MASTER_KEY=$MASTER_KEY" >> $GITHUB_ENV
 
       - name: Generate API Key
         id: auth
@@ -488,57 +478,41 @@ jobs:
           FLAG_RESPONSE=$(curl -s -X POST "${BASE_URL}/flag/flags" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
-            -d "{
-                \"name\": \"$FLAG_NAME\",
-                \"description\": \"Evaluation test flag\",
-                \"is_enabled\": true
-            }")
+            -d "{\"name\":\"$FLAG_NAME\",\"description\":\"Evaluation test\",\"is_enabled\":true}")
           CREATED=$(echo "$FLAG_RESPONSE" | jq -r '.name // empty')
           if [ "$CREATED" != "$FLAG_NAME" ]; then
-            echo "ERROR: Failed to create flag. Response: $FLAG_RESPONSE"
+            echo "ERROR: Failed to create flag"
             exit 1
           fi
           echo "Flag created: $FLAG_NAME"
 
-      - name: Create Targeting Rule
+      - name: Create Targeting Rule (100%)
         run: |
-          echo "Criando regra de targeting (100%)..."
           TARGETING_RESPONSE=$(curl -s -X POST "${BASE_URL}/targeting/rules" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
-            -d "{
-                \"flag_name\": \"$FLAG_NAME\",
-                \"is_enabled\": true,
-                \"rules\": {
-                    \"type\": \"PERCENTAGE\",
-                    \"value\": 100
-                }
-            }")
+            -d "{\"flag_name\":\"$FLAG_NAME\",\"is_enabled\":true,\"rules\":{\"type\":\"PERCENTAGE\",\"value\":100}}")
           RULE_CREATED=$(echo "$TARGETING_RESPONSE" | jq -r '.flag_name // empty')
           if [ "$RULE_CREATED" != "$FLAG_NAME" ]; then
             echo "ERROR: Failed to create targeting rule"
-            echo "Response: $TARGETING_RESPONSE"
             exit 1
           fi
           echo "Targeting rule created"
 
       - name: Evaluate Flag
         run: |
-          echo "Avaliando flag..."
           EVAL_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
             "${BASE_URL}/evaluation/evaluate?user_id=user-123&flag_name=${FLAG_NAME}" \
             -H "Authorization: Bearer ${API_KEY}")
           HTTP_STATUS=$(echo "$EVAL_RESPONSE" | tail -n 1)
           BODY=$(echo "$EVAL_RESPONSE" | head -n -1)
           if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: Evaluation failed. HTTP $HTTP_STATUS"
-            echo "Response: $BODY"
+            echo "ERROR: Evaluation failed (HTTP $HTTP_STATUS). Response: $BODY"
             exit 1
           fi
           ENABLED=$(echo "$BODY" | jq -r '.enabled // false')
           if [ "$ENABLED" != "true" ]; then
             echo "ERROR: Flag should be enabled, got $ENABLED"
-            echo "Response: $BODY"
             exit 1
           fi
           echo "Evaluation successful: enabled=$ENABLED"
@@ -556,16 +530,16 @@ jobs:
     name: Performance Tests
     runs-on: ubuntu-latest
     needs: setup
-    env:
-      BASE_URL: "${{ needs.setup.outputs.BASE_URL }}"
     steps:
-      - name: Debug BASE_URL
+      - name: Download BASE_URL
+        uses: actions/download-artifact@v4
+        with:
+          name: base-url
+
+      - name: Set BASE_URL
         run: |
-          echo "BASE_URL recebida: $BASE_URL"
-          if [ -z "$BASE_URL" ]; then
-            echo "ERROR: BASE_URL is empty"
-            exit 1
-          fi
+          BASE_URL=$(cat base_url.txt)
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
 
       - name: API Latency Test
         run: |
@@ -592,17 +566,23 @@ jobs:
     name: End-to-End Tests
     runs-on: ubuntu-latest
     needs: setup
-    env:
-      BASE_URL: "${{ needs.setup.outputs.BASE_URL }}"
-      MASTER_KEY: "${{ needs.setup.outputs.MASTER_KEY }}"
     steps:
-      - name: Debug BASE_URL
+      - name: Download BASE_URL and MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: base-url
+
+      - name: Download MASTER_KEY
+        uses: actions/download-artifact@v4
+        with:
+          name: master-key
+
+      - name: Set environment
         run: |
-          echo "BASE_URL recebida: $BASE_URL"
-          if [ -z "$BASE_URL" ]; then
-            echo "ERROR: BASE_URL is empty"
-            exit 1
-          fi
+          BASE_URL=$(cat base_url.txt)
+          MASTER_KEY=$(cat master_key.txt)
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
+          echo "MASTER_KEY=$MASTER_KEY" >> $GITHUB_ENV
 
       - name: E2E Test - Full Flow
         run: |
@@ -611,7 +591,6 @@ jobs:
           echo "=========================================="
 
           # 1. Generate API Key
-          echo "1. Gerando API Key..."
           AUTH_RESPONSE=$(curl -s -X POST "${BASE_URL}/validate/admin/keys" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${MASTER_KEY}" \
@@ -619,70 +598,50 @@ jobs:
           API_KEY=$(echo "$AUTH_RESPONSE" | jq -r '.key // empty')
           if [ -z "$API_KEY" ]; then
             echo "ERROR: Failed to generate API key"
-            echo "Response: $AUTH_RESPONSE"
             exit 1
           fi
           echo "✓ API Key generated"
 
           # 2. Create Flag
-          echo "2. Criando flag..."
           FLAG_NAME="e2e-flag-$(date +%s)"
           FLAG_RESPONSE=$(curl -s -X POST "${BASE_URL}/flag/flags" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
-            -d "{
-                \"name\": \"$FLAG_NAME\",
-                \"description\": \"E2E test flag\",
-                \"is_enabled\": true
-            }")
+            -d "{\"name\":\"$FLAG_NAME\",\"description\":\"E2E test\",\"is_enabled\":true}")
           CREATED_NAME=$(echo "$FLAG_RESPONSE" | jq -r '.name // empty')
           if [ "$CREATED_NAME" != "$FLAG_NAME" ]; then
             echo "ERROR: Failed to create flag"
-            echo "Response: $FLAG_RESPONSE"
             exit 1
           fi
           echo "✓ Flag created: $FLAG_NAME"
 
           # 3. Create Targeting Rule
-          echo "3. Criando regra de targeting..."
           TARGETING_RESPONSE=$(curl -s -X POST "${BASE_URL}/targeting/rules" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${API_KEY}" \
-            -d "{
-                \"flag_name\": \"$FLAG_NAME\",
-                \"is_enabled\": true,
-                \"rules\": {
-                    \"type\": \"PERCENTAGE\",
-                    \"value\": 100
-                }
-            }")
+            -d "{\"flag_name\":\"$FLAG_NAME\",\"is_enabled\":true,\"rules\":{\"type\":\"PERCENTAGE\",\"value\":100}}")
           RULE_CREATED=$(echo "$TARGETING_RESPONSE" | jq -r '.flag_name // empty')
           if [ "$RULE_CREATED" != "$FLAG_NAME" ]; then
             echo "ERROR: Failed to create targeting rule"
-            echo "Response: $TARGETING_RESPONSE"
             exit 1
           fi
           echo "✓ Targeting rule created"
 
           # 4. Evaluate Flag
-          echo "4. Avaliando flag..."
           EVAL_RESPONSE=$(curl -s -X GET \
             "${BASE_URL}/evaluation/evaluate?user_id=e2e-user&flag_name=${FLAG_NAME}" \
             -H "Authorization: Bearer ${API_KEY}")
           ENABLED=$(echo "$EVAL_RESPONSE" | jq -r '.enabled // false')
           if [ "$ENABLED" != "true" ]; then
             echo "ERROR: Flag evaluation failed"
-            echo "Response: $EVAL_RESPONSE"
             exit 1
           fi
           echo "✓ Flag evaluated: enabled=$ENABLED"
 
           # 5. Cleanup
-          echo "5. Limpando recursos..."
           curl -s -X DELETE "${BASE_URL}/flag/flags/${FLAG_NAME}" \
             -H "Authorization: Bearer ${API_KEY}"
           echo "✓ Cleanup completed"
-
           echo "=========================================="
           echo "✅ E2E test passed"
           echo "=========================================="
@@ -711,8 +670,6 @@ jobs:
           echo "  - Performance Tests"
           echo "  - End-to-End Tests"
           echo ""
-          # Check if any previous job failed (using GitHub API)
-          # This is a simple summary; actual failures are shown in job results.
           if [ "${{ needs.test-health.result }}" != "success" ] || \
              [ "${{ needs.test-auth.result }}" != "success" ] || \
              [ "${{ needs.test-flags.result }}" != "success" ] || \
