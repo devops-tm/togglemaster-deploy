@@ -3,12 +3,20 @@ kind: Kustomization
 resources:
 - ../../base
 
-# Customizações específicas de produção
-
-
-
-
 patches:
+# ============================================================
+# PATCH GENÉRICO: aplica revisionHistoryLimit a TODOS os Deployments
+# ============================================================
+- target:
+    kind: Deployment
+  patch: |-
+    - op: add
+      path: /spec/revisionHistoryLimit
+      value: 2
+
+# ============================================================
+# PATCHES INDIVIDUAIS: replicas específicas por serviço
+# ============================================================
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -16,13 +24,15 @@ patches:
   target:
     kind: Deployment
     name: auth-service
+
 - patch: |-
     - op: replace
       path: /spec/replicas
-      value: 1
+      value: 2          # <-- pode ser diferente para cada serviço
   target:
     kind: Deployment
     name: flag-service
+
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -30,13 +40,15 @@ patches:
   target:
     kind: Deployment
     name: targeting-service
+
 - patch: |-
     - op: replace
       path: /spec/replicas
-      value: 1
+      value: 3          # <-- evaluation pode ter mais réplicas
   target:
     kind: Deployment
     name: evaluation-service
+
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -45,7 +57,9 @@ patches:
     kind: Deployment
     name: analytics-service
 
-# Imagens com registry ECR e tag latest
+# ============================================================
+# IMAGENS
+# ============================================================
 images:
 - name: analytics-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/analytics-service
