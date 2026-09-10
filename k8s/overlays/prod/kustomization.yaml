@@ -52,7 +52,7 @@ images:
   newTag: e249f5bcc318c56364b8e44c559cb1513762823e
 - name: auth-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/auth-service
-  newTag: 38b1c8fce20f5550e115029f75512549a6535bc3
+  newTag: e249f5bcc318c56364b8e44c559cb1513762823e
 - name: evaluation-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/evaluation-service
   newTag: 38b1c8fce20f5550e115029f75512549a6535bc3
