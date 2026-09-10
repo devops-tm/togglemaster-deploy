@@ -3,20 +3,24 @@ kind: Kustomization
 resources:
 - ../../base
 
-patches:
 # ============================================================
 # PATCH GENÉRICO: aplica revisionHistoryLimit a TODOS os Deployments
 # ============================================================
-- target:
-    kind: Deployment
-  patch: |-
-    - op: add
-      path: /spec/revisionHistoryLimit
-      value: 2
 
 # ============================================================
 # PATCHES INDIVIDUAIS: replicas específicas por serviço
 # ============================================================
+
+
+
+
+patches:
+- patch: |-
+    - op: add
+      path: /spec/revisionHistoryLimit
+      value: 2
+  target:
+    kind: Deployment
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -24,7 +28,6 @@ patches:
   target:
     kind: Deployment
     name: auth-service
-
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -32,7 +35,6 @@ patches:
   target:
     kind: Deployment
     name: flag-service
-
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -40,7 +42,6 @@ patches:
   target:
     kind: Deployment
     name: targeting-service
-
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -48,7 +49,6 @@ patches:
   target:
     kind: Deployment
     name: evaluation-service
-
 - patch: |-
     - op: replace
       path: /spec/replicas
@@ -75,4 +75,4 @@ images:
   newTag: f9d5bbe3ce6e1d2671f2ecfa0cf765cb007e7e29
 - name: targeting-service
   newName: 480176645265.dkr.ecr.us-east-1.amazonaws.com/targeting-service
-  newTag: f9d5bbe3ce6e1d2671f2ecfa0cf765cb007e7e29
+  newTag: e35a6be7e1fb901558949350fa60192463c69997
